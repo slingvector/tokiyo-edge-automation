@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Node {
+  id        String   @id
+  status    String   @default("ACTIVE")
+  ip        String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  jobs      Job[]
+}
+
+model Job {
+  id          String   @id
+  nodeId      String
+  action      String
+  payload     Json
+  status      String   @default("PENDING") // PENDING, DISPATCHED, SUCCESS, FAILED
+  errorReason String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  node Node @relation(fields: [nodeId], references: [id])
+}

@@ -1,0 +1,6 @@
+# Build artifacts
+dump*.xml
+*.png
+patch.xml
+link.txt
+.DS_Store
