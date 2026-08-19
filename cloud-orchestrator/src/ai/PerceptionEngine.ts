@@ -7,7 +7,7 @@ const ai = new GoogleGenAI({});
 export interface PerceptionResult {
   x?: number;
   y?: number;
-  action: 'click' | 'click_element' | 'swipe' | 'type' | 'done';
+  action: 'click' | 'click_element' | 'swipe' | 'type' | 'long_press' | 'done';
   start_x?: number;
   start_y?: number;
   end_x?: number;
@@ -45,7 +45,7 @@ The XML elements have a \`bounds="[left,top][right,bottom]"\` attribute. Calcula
 
 Return your response as a valid JSON object matching this schema:
 {
-  "action": "click" | "click_element" | "swipe" | "type" | "done",
+  "action": "click" | "click_element" | "swipe" | "type" | "long_press" | "done",
   "x": number, // Required if action is "click" (fallback)
   "y": number, // Required if action is "click" (fallback)
   "semantic_text": string, // Required if action is "click_element" (Preferred! Provide the exact text to click)
@@ -77,8 +77,9 @@ ${prunedXml}`;
     }
 
     try {
+      // 1. Try Primary Cloud API (Gemini Vision)
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash', // Using flash for lower latency, can upgrade to pro if needed
+        model: 'gemini-3.6-flash',
         contents: [
             {
                 role: 'user',
@@ -98,23 +99,64 @@ ${prunedXml}`;
       }
       
       const parsed = JSON.parse(responseText);
-      return {
-        action: parsed.action,
-        x: parsed.x,
-        y: parsed.y,
-        semantic_text: parsed.semantic_text,
-        resource_id: parsed.resource_id,
-        start_x: parsed.start_x,
-        start_y: parsed.start_y,
-        end_x: parsed.end_x,
-        end_y: parsed.end_y,
-        text: parsed.text,
-        reasoning: parsed.reasoning
-      };
-    } catch (error) {
-      console.error("[PerceptionEngine] Error resolving target:", error);
-      throw error;
+      return this.mapResult(parsed);
+
+    } catch (geminiError) {
+      console.warn("[PerceptionEngine] Gemini API failed (likely rate limit). Falling back to Local LLM...", geminiError.message);
+      
+      // 2. Fallback to Local API (Ollama Text-Only)
+      try {
+        const response = await fetch('http://localhost:11434/api/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'qwen2.5-coder:14b', // Using local text model
+            system: systemPrompt,
+            prompt: userPrompt, // Notice we don't send the image here
+            stream: false,
+            format: 'json',
+            options: {
+              temperature: 0.1
+            }
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Ollama API Error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const responseText = data.response;
+        
+        if (!responseText) {
+            throw new Error("No response from Local AI");
+        }
+        
+        const parsed = JSON.parse(responseText);
+        return this.mapResult(parsed);
+      } catch (ollamaError) {
+        console.error("[PerceptionEngine] Local LLM Fallback also failed:", ollamaError);
+        throw ollamaError;
+      }
     }
+  }
+
+  private mapResult(parsed: any): PerceptionResult {
+    return {
+      action: parsed.action,
+      x: parsed.x,
+      y: parsed.y,
+      semantic_text: parsed.semantic_text,
+      resource_id: parsed.resource_id,
+      start_x: parsed.start_x,
+      start_y: parsed.start_y,
+      end_x: parsed.end_x,
+      end_y: parsed.end_y,
+      text: parsed.text,
+      reasoning: parsed.reasoning
+    };
   }
 }
 

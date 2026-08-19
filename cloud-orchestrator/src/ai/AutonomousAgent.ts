@@ -103,6 +103,10 @@ export class AutonomousAgent {
                 actionName = 'paste_text';
                 actionParams = { text: target.text };
                 actionSummary = `Typed text: "${target.text}"`;
+            } else if (target.action === 'long_press') {
+                shellCommand = `input swipe ${target.x} ${target.y} ${target.x} ${target.y} 1000`;
+                actionParams = { command: shellCommand };
+                actionSummary = `Long pressed at (${target.x}, ${target.y})`;
             } else {
                 throw new Error(`Unknown action type: ${target.action}`);
             }

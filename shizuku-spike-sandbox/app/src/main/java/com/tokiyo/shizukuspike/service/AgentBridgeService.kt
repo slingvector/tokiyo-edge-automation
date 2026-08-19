@@ -72,6 +72,16 @@ class AgentBridgeService : Service(), TelemetryClient {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val payloadStr = intent?.getStringExtra("fcm_payload")
+        if (payloadStr != null) {
+            Log.i("AgentBridgeService", "Received FCM payload via intent")
+            try {
+                val payload = json.decodeFromString<JobPayload>(payloadStr)
+                jobDispatcher.dispatch(payload, payloadStr)
+            } catch (e: Exception) {
+                Log.e("AgentBridgeService", "Failed to parse FCM payload", e)
+            }
+        }
         return START_STICKY
     }
 

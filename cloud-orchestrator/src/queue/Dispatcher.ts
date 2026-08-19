@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import { signer } from '../crypto/Signer';
 import { PrismaClient } from '@prisma/client';
 import { io, connectedNodes } from '../api/Server';
+import { messaging } from '../fcm/FirebaseAdmin';
 
 const connection = new IORedis({ maxRetriesPerRequest: null });
 const prisma = new PrismaClient();
@@ -18,9 +19,6 @@ export const worker = new Worker('node-jobs', async (job: Job) => {
 
   // Check if node is connected
   const socketId = connectedNodes.get(node_id);
-  if (!socketId) {
-    throw new Error(`Node ${node_id} is not connected to WebSockets`);
-  }
 
   // 1. Sign the payload
   const signedPayload = signer.signPayload({
@@ -37,9 +35,27 @@ export const worker = new Worker('node-jobs', async (job: Job) => {
       data: { status: 'DISPATCHED' }
     });
 
-    // 2. Dispatch via WebSocket
-    io.to(socketId).emit('dispatch_job', signedPayload);
-    console.log(`[Dispatcher] Successfully emitted job ${job.id} to socket ${socketId}`);
+    // 2. Dispatch via WebSocket or FCM
+    if (socketId) {
+      io.to(socketId).emit('dispatch_job', signedPayload);
+      console.log(`[Dispatcher] Successfully emitted job ${job.id} to socket ${socketId}`);
+    } else {
+      const node = await prisma.node.findUnique({ where: { id: node_id } });
+      if (!node || !node.fcmToken) {
+        throw new Error(`Node ${node_id} is not connected to WebSockets and has no FCM token registered.`);
+      }
+      
+      await messaging.send({
+        token: node.fcmToken,
+        data: {
+          payload: JSON.stringify(signedPayload)
+        },
+        android: {
+          priority: 'high'
+        }
+      });
+      console.log(`[Dispatcher] Successfully emitted job ${job.id} via FCM High-Priority Data Message to ${node_id}`);
+    }
 
     // We do NOT mark SUCCESS here anymore. We wait for the Android node 
     // to execute the shell command and emit the 'telemetry_report' event!

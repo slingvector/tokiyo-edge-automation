@@ -11,6 +11,7 @@ model Node {
   id        String   @id
   status    String   @default("ACTIVE")
   ip        String?
+  fcmToken  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   jobs      Job[]

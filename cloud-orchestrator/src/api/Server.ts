@@ -252,6 +252,32 @@ app.post('/api/v1/agent/autonomous', async (req, res) => {
   return res.status(201).json({ status: 'STARTED', session_id: sessionId });
 });
 
+app.get('/api/v1/agent/autonomous/:id', async (req, res) => {
+  const jobId = req.params.id;
+  const job = await agentQueue.getJob(jobId);
+  
+  if (!job) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  const state = await job.getState();
+  let result = null;
+  let failedReason = null;
+  
+  if (state === 'completed') {
+    result = job.returnvalue;
+  } else if (state === 'failed') {
+    failedReason = job.failedReason;
+  }
+  
+  return res.json({
+    session_id: jobId,
+    state: state, // 'waiting', 'active', 'completed', 'failed'
+    result: result,
+    error: failedReason
+  });
+});
+
 app.get('/api/v1/public-key', (req, res) => {
   res.json({ public_key: signer.getPublicKeyHex() });
 });

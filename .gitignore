@@ -4,3 +4,4 @@ dump*.xml
 patch.xml
 link.txt
 .DS_Store
+*.apk
