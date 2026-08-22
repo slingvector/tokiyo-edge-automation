@@ -9,19 +9,29 @@ import { signer } from '../crypto/Signer';
 import { EventEmitter } from 'events';
 import { perceptionEngine } from '../ai/PerceptionEngine';
 import zlib from 'zlib';
+import { createAdapter } from '@socket.io/redis-adapter';
+import Redis from 'ioredis';
 
 export const telemetryEvents = new EventEmitter();
 
 const app = express();
-const server = http.createServer(app);
+export const server = http.createServer(app);
 
 // Configure Socket.IO
 export const io = new SocketIOServer(server, {
-  cors: { origin: '*' } // Allow edge nodes to connect
+  cors: { origin: '*' }, // Allow edge nodes to connect
+  maxHttpBufferSize: 5e7 // 50MB
 });
 
-// Map to track connected nodes: Map<node_id, socket_id>
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+export const redisClient = new Redis(redisUrl);
+const subClient = redisClient.duplicate();
+io.adapter(createAdapter(redisClient, subClient));
+
+// Note: Map variables are deprecated in favor of redisClient.hget/hset
+// We leave them exported but empty so imports don't break immediately if not updated.
 export const connectedNodes = new Map<string, string>();
+export const nodeStatus = new Map<string, 'IDLE' | 'BUSY'>();
 
 app.use(express.json());
 const prisma = new PrismaClient();
@@ -34,7 +44,13 @@ io.on('connection', (socket) => {
   socket.on('register_node', async (data) => {
     const { node_id } = data;
     if (node_id) {
-      connectedNodes.set(node_id, socket.id);
+      (socket as any).node_id = node_id;
+      await redisClient.hset('connectedNodes', node_id, socket.id);
+      
+      const currentStatus = await redisClient.hget('nodeStatus', node_id);
+      if (!currentStatus) {
+        await redisClient.hset('nodeStatus', node_id, 'IDLE');
+      }
       console.log(`[Socket] Node ${node_id} registered with socket ${socket.id}`);
       
       // Ensure node exists in DB and is marked ACTIVE
@@ -83,15 +99,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
-    // Find and remove the node from connectedNodes
-    for (const [nodeId, socketId] of connectedNodes.entries()) {
-      if (socketId === socket.id) {
-        connectedNodes.delete(nodeId);
-        console.log(`[Socket] Node ${nodeId} disconnected`);
-        // Optionally mark node as offline in DB here
-        break;
-      }
+  socket.on('disconnect', async () => {
+    const nodeId = (socket as any).node_id;
+    if (nodeId) {
+      await redisClient.hdel('connectedNodes', nodeId);
+      await redisClient.hdel('nodeStatus', nodeId);
+      console.log(`[Socket] Node ${nodeId} disconnected`);
     }
   });
 });
@@ -232,10 +245,25 @@ app.post('/api/v1/agent/action', async (req, res) => {
 
 // AI Autonomous Session Endpoint
 app.post('/api/v1/agent/autonomous', async (req, res) => {
-  const { node_id, goal, max_steps = 10 } = req.body;
+  let { node_id, goal, max_steps = 10 } = req.body;
 
-  if (!node_id || !goal) {
-    return res.status(400).json({ error: 'node_id and goal are required' });
+  if (!goal) {
+    return res.status(400).json({ error: 'goal is required' });
+  }
+
+  if (!node_id) {
+    const { FleetRouter } = require('../queue/FleetRouter');
+    node_id = await FleetRouter.assignIdleNode();
+    if (!node_id) {
+      return res.status(503).json({ error: 'No idle devices available in the fleet' });
+    }
+  } else {
+    // If a specific node was requested, check if it's BUSY
+    const status = await redisClient.hget('nodeStatus', node_id);
+    if (status === 'BUSY') {
+        return res.status(409).json({ error: `Node ${node_id} is currently busy`});
+    }
+    await redisClient.hset('nodeStatus', node_id, 'BUSY');
   }
 
   const sessionId = uuidv4();
@@ -278,11 +306,115 @@ app.get('/api/v1/agent/autonomous/:id', async (req, res) => {
   });
 });
 
+// Static APK Analysis Proxy Endpoint
+app.post('/api/v1/analyzer/deep-links', async (req, res) => {
+  const { apk_path } = req.body;
+  if (!apk_path) {
+    return res.status(400).json({ error: 'apk_path is required' });
+  }
+
+  try {
+    const response = await fetch('http://127.0.0.1:8082/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apk_path })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Analyzer returned status ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return res.json(data);
+  } catch (error: any) {
+    console.error("APK Analyzer Error:", error);
+    return res.status(500).json({ error: 'Failed to communicate with APK analyzer: ' + error.message });
+  }
+});
+
+// Hardware & Scale Resiliency Endpoint
+app.post('/api/v1/agent/resiliency', async (req, res) => {
+  const { node_id, package_name } = req.body;
+  if (!node_id || !package_name) {
+    return res.status(400).json({ error: 'node_id and package_name are required' });
+  }
+
+  try {
+    // Dispatch pm clear
+    const clearJobId = uuidv4();
+    await prisma.job.create({
+      data: {
+        id: clearJobId,
+        nodeId: node_id,
+        action: 'shell',
+        payload: { command: `pm clear ${package_name}` },
+        status: 'PENDING'
+      }
+    });
+    await jobQueue.add('dispatch-job', {
+      node_id, action: 'shell', params: { command: `pm clear ${package_name}` }
+    }, { jobId: clearJobId });
+
+    // Dispatch dumpsys deviceidle for target package
+    const whitelistJobId1 = uuidv4();
+    await prisma.job.create({
+      data: {
+        id: whitelistJobId1,
+        nodeId: node_id,
+        action: 'shell',
+        payload: { command: `dumpsys deviceidle whitelist +${package_name}` },
+        status: 'PENDING'
+      }
+    });
+    await jobQueue.add('dispatch-job', {
+      node_id, action: 'shell', params: { command: `dumpsys deviceidle whitelist +${package_name}` }
+    }, { jobId: whitelistJobId1 });
+
+    // Dispatch dumpsys deviceidle for agent package
+    const whitelistJobId2 = uuidv4();
+    await prisma.job.create({
+      data: {
+        id: whitelistJobId2,
+        nodeId: node_id,
+        action: 'shell',
+        payload: { command: `dumpsys deviceidle whitelist +com.tokiyo.shizukuspike` },
+        status: 'PENDING'
+      }
+    });
+    await jobQueue.add('dispatch-job', {
+      node_id, action: 'shell', params: { command: `dumpsys deviceidle whitelist +com.tokiyo.shizukuspike` }
+    }, { jobId: whitelistJobId2 });
+
+    return res.status(201).json({ 
+      status: 'ENQUEUED', 
+      jobs: [clearJobId, whitelistJobId1, whitelistJobId2]
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/v1/public-key', (req, res) => {
   res.json({ public_key: signer.getPublicKeyHex() });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Cloud Orchestrator WebSockets & API listening on port ${PORT}`);
+// Fleet Status Endpoint
+app.get('/api/v1/fleet/status', async (req, res) => {
+  const statuses = await redisClient.hgetall('nodeStatus');
+  const sockets = await redisClient.hgetall('connectedNodes');
+  const fleet = Object.keys(statuses).map(node_id => {
+    return {
+      node_id,
+      status: statuses[node_id],
+      socket_id: sockets[node_id]
+    };
+  });
+  res.json({ fleet });
 });
+
+const PORT = process.env.PORT || 3000;
+if (require.main === module || process.env.NODE_ENV === 'production' || process.env.START_SERVER === 'true') {
+  server.listen(PORT, () => {
+    console.log(`Cloud Orchestrator WebSockets & API listening on port ${PORT}`);
+  });
+}

@@ -22,6 +22,9 @@ export const agentWorker = new Worker('autonomous-jobs', async (job: Job) => {
   } catch (error: any) {
     console.error(`[AgentWorker] Error in session ${job.id}:`, error.message);
     throw error;
+  } finally {
+    const { FleetRouter } = require('./FleetRouter');
+    await FleetRouter.releaseNode(node_id);
   }
 
 }, { 

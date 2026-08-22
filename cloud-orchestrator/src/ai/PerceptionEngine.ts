@@ -7,7 +7,7 @@ const ai = new GoogleGenAI({});
 export interface PerceptionResult {
   x?: number;
   y?: number;
-  action: 'click' | 'click_element' | 'swipe' | 'type' | 'long_press' | 'done';
+  action: 'click' | 'click_element' | 'swipe' | 'type' | 'long_press' | 'done' | 'rescue';
   start_x?: number;
   start_y?: number;
   end_x?: number;
@@ -41,11 +41,12 @@ export class PerceptionEngine {
     const systemPrompt = `You are the Dynamic Perception Engine for an Android Edge Automation framework.
 Your task is to analyze the provided XML UI dump and optional screenshot, review the past action history, and decide on the NEXT optimal action to accomplish the user's goal.
 If the goal is achieved, output action "done".
+If an unexpected popup, OS modal, or permission dialog is completely blocking the screen and preventing you from achieving the goal, output action "rescue".
 The XML elements have a \`bounds="[left,top][right,bottom]"\` attribute. Calculate center points for clicking.
 
 Return your response as a valid JSON object matching this schema:
 {
-  "action": "click" | "click_element" | "swipe" | "type" | "long_press" | "done",
+  "action": "click" | "click_element" | "swipe" | "type" | "long_press" | "done" | "rescue",
   "x": number, // Required if action is "click" (fallback)
   "y": number, // Required if action is "click" (fallback)
   "semantic_text": string, // Required if action is "click_element" (Preferred! Provide the exact text to click)

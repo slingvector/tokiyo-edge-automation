@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: tokiyo-orchestrator
+    env: docker
+    rootDir: cloud-orchestrator
+    plan: free

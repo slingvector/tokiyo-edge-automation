@@ -4,6 +4,7 @@ import { jobQueue } from '../queue/Dispatcher';
 import { telemetryEvents } from '../api/Server';
 import { PrismaClient } from '@prisma/client';
 import zlib from 'zlib';
+import { DeepLinkRegistry } from '../services/DeepLinkRegistry';
 
 const prisma = new PrismaClient();
 
@@ -20,6 +21,44 @@ export class AutonomousAgent {
 
         for (let step = 1; step <= this.maxSteps; step++) {
             console.log(`[AutonomousAgent] Step ${step}/${this.maxSteps}`);
+            
+            // 0. Deep Link Intent Fallback (APK Intelligence)
+            const packageName = "com.linkedin.android"; // Hardcoded for this test phase
+            const shortcutLink = DeepLinkRegistry.findDeepLinkForGoal(packageName, this.goal);
+            
+            if (shortcutLink && step === 1) {
+                const filters = shortcutLink.intent_filters;
+                let url = "";
+                if (filters.data && filters.data.length > 0) {
+                    const d = filters.data[0];
+                    url = `${d.scheme || 'https'}://${d.host || ''}${d.pathPrefix || ''}`;
+                }
+                
+                if (url) {
+                    console.log(`[AutonomousAgent] ⚡ DEEP LINK SHORTCUT FOUND: ${url}`);
+                    history.push(`Step 0: Invoked intent fallback for ${url} based on goal.`);
+                    
+                    const intentJobId = uuidv4();
+                    await prisma.job.create({
+                        data: {
+                            id: intentJobId,
+                            nodeId: this.nodeId,
+                            action: 'deep_link',
+                            payload: { url: url, package: packageName },
+                            status: 'PENDING'
+                        }
+                    });
+
+                    await jobQueue.add('dispatch-job', {
+                        node_id: this.nodeId,
+                        action: 'deep_link',
+                        params: { url: url, package: packageName }
+                    }, { jobId: intentJobId });
+
+                    // Give the app 2 seconds to launch and settle before we take the first UI dump
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+            }
             
             // 1. Perceive
             const dumpJobId = uuidv4();
@@ -81,6 +120,28 @@ export class AutonomousAgent {
                 return { status: 'SUCCESS', steps: step, history };
             }
 
+            if (target.action === 'rescue') {
+                console.log(`[AutonomousAgent] Popup/Modal detected! Triggering Recursive PopupRescue Agent...`);
+                history.push(`Step ${step}: Detected popup, triggered PopupRescue Sub-Agent.`);
+                
+                const rescueAgent = new AutonomousAgent(
+                    this.nodeId, 
+                    "Dismiss any visible popups, dialogs, alerts, or modals. Just close it. Do not interact with the background app.", 
+                    3
+                );
+                
+                const rescueResult = await rescueAgent.run();
+                
+                if (rescueResult.status === 'SUCCESS') {
+                    console.log(`[AutonomousAgent] PopupRescue successful! Resuming primary workflow...`);
+                    history.push(`Step ${step} (Sub-Agent): Successfully dismissed popup.`);
+                    continue; // Skip the rest of this loop and pull a fresh UI dump next iteration
+                } else {
+                    console.log(`[AutonomousAgent] PopupRescue failed to dismiss popup. Aborting primary workflow.`);
+                    return { status: 'FAILED', reason: 'RESCUE_FAILED', history };
+                }
+            }
+
             // 4. Act
             let actionName = 'shell';
             let actionParams: any = {};
@@ -92,21 +153,41 @@ export class AutonomousAgent {
                 actionParams = { text: target.semantic_text, resource_id: target.resource_id };
                 actionSummary = `Clicked element (text="${target.semantic_text}", id="${target.resource_id}")`;
             } else if (target.action === 'click') {
-                shellCommand = `input tap ${target.x} ${target.y}`;
-                actionParams = { command: shellCommand };
-                actionSummary = `Clicked at (${target.x}, ${target.y})`;
+                actionName = 'organic_tap';
+                actionParams = { x: target.x, y: target.y };
+                actionSummary = `Organic clicked at (${target.x}, ${target.y})`;
+            } else if (target.action === 'click_unmerge') {
+                actionName = 'organic_tap';
+                const ApkAnalyzerClient = require('../services/ApkAnalyzerClient').ApkAnalyzerClient;
+                const analyzer = new ApkAnalyzerClient();
+                
+                console.log(`[AutonomousAgent] Intercepting for Unmerge Routine. Targeting text: "${target.semantic_text}" inside bbox: ${target.bbox}`);
+                
+                const unmergeResult = await analyzer.unmergeCompose(
+                    imageBase64,
+                    target.semantic_text,
+                    target.bbox // [l, t, r, b]
+                );
+                
+                if (unmergeResult.found) {
+                    actionParams = { x: unmergeResult.x, y: unmergeResult.y };
+                    actionSummary = `Unmerged visual crop and organic clicked at precise coordinate (${unmergeResult.x}, ${unmergeResult.y})`;
+                } else {
+                    console.error("[AutonomousAgent] Unmerge Vision Failed:", unmergeResult.error);
+                    throw new Error(`Unmerge Vision Failed: ${unmergeResult.error}`);
+                }
             } else if (target.action === 'swipe') {
-                shellCommand = `input swipe ${target.start_x} ${target.start_y} ${target.end_x} ${target.end_y} 500`;
-                actionParams = { command: shellCommand };
-                actionSummary = `Swiped from (${target.start_x}, ${target.start_y}) to (${target.end_x}, ${target.end_y})`;
+                actionName = 'organic_swipe';
+                actionParams = { start_x: target.start_x, start_y: target.start_y, end_x: target.end_x, end_y: target.end_y, duration_ms: 500 };
+                actionSummary = `Organic swiped from (${target.start_x}, ${target.start_y}) to (${target.end_x}, ${target.end_y})`;
             } else if (target.action === 'type') {
-                actionName = 'paste_text';
+                actionName = 'organic_type';
                 actionParams = { text: target.text };
-                actionSummary = `Typed text: "${target.text}"`;
+                actionSummary = `Organic typed text: "${target.text}"`;
             } else if (target.action === 'long_press') {
-                shellCommand = `input swipe ${target.x} ${target.y} ${target.x} ${target.y} 1000`;
-                actionParams = { command: shellCommand };
-                actionSummary = `Long pressed at (${target.x}, ${target.y})`;
+                actionName = 'organic_swipe';
+                actionParams = { start_x: target.x, start_y: target.y, end_x: target.x, end_y: target.y, duration_ms: 1000 };
+                actionSummary = `Organic long pressed at (${target.x}, ${target.y})`;
             } else {
                 throw new Error(`Unknown action type: ${target.action}`);
             }

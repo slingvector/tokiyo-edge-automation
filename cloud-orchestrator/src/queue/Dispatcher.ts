@@ -2,7 +2,7 @@ import { Queue, Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { signer } from '../crypto/Signer';
 import { PrismaClient } from '@prisma/client';
-import { io, connectedNodes } from '../api/Server';
+import { io, redisClient } from '../api/Server';
 import { messaging } from '../fcm/FirebaseAdmin';
 
 const connection = new IORedis({ maxRetriesPerRequest: null });
@@ -17,8 +17,8 @@ export const worker = new Worker('node-jobs', async (job: Job) => {
   
   console.log(`[Dispatcher] Processing job ${job.id} for node ${node_id}`);
 
-  // Check if node is connected
-  const socketId = connectedNodes.get(node_id);
+  // Check if node is connected using Redis
+  const socketId = await redisClient.hget('connectedNodes', node_id);
 
   // 1. Sign the payload
   const signedPayload = signer.signPayload({

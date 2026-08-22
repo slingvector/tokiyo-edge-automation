@@ -14,10 +14,13 @@
   "dependencies": {
     "@google/genai": "^2.16.0",
     "@prisma/client": "^5.22.0",
+    "@socket.io/redis-adapter": "^8.3.0",
     "axios": "^1.19.0",
     "bullmq": "^6.0.11",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "fast-xml-parser": "^5.11.0",
     "firebase-admin": "^14.2.0",
     "ioredis": "^6.0.0",
     "prisma": "^5.22.0",
@@ -27,6 +30,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.2.0",
     "@types/uuid": "^10.0.0",
