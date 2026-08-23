@@ -253,17 +253,18 @@ export class LinkedInEngager {
         await this.device.sleep(3000);
 
         console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Typing payload...`);
-        await this.device.inputText(commentText);
+        let encodedMessage = commentText.replace(/"/g, '\\"').replace(/ /g, '%s');
+        await this.device.executeCommand(`input text "${encodedMessage}"`);
         await this.device.sleep(2000);
 
         // Submit the comment
         let submitXmlData = await this.device.getUiDumpXml();
         
-        const postBtnRegex = /text="(Comment|Post)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
+        const postBtnRegex = /(?:text|content-desc)="(?:Post|Comment)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
         const postBtnMatch = submitXmlData.match(postBtnRegex);
 
         if (postBtnMatch) {
-            const postBounds = this.parseBounds(postBtnMatch[2]!);
+            const postBounds = this.parseBounds(postBtnMatch[1]!);
             if (postBounds) {
                 console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Found Submit button at ${postBounds.x}, ${postBounds.y}`);
                 await this.device.tapCoordinate(postBounds.x, postBounds.y);
