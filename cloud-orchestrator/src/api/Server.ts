@@ -331,7 +331,12 @@ app.post('/api/v1/engage/linkedin', async (req, res) => {
     target_id,
     message
   }, {
-    jobId: jobId
+    jobId: jobId,
+    attempts: 10,
+    backoff: {
+      type: 'exponential',
+      delay: 15000
+    }
   });
 
   return res.status(201).json({ status: 'ENQUEUED', job_id: jobId });

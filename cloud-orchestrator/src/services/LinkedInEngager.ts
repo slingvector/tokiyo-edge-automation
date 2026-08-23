@@ -60,7 +60,7 @@ export class LinkedInEngager {
             let match = xmlData.match(likeRegex);
 
             if (!match) {
-                 const likeFallbackRegex = /content-desc="Like"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/;
+                 const likeFallbackRegex = /(?:text|content-desc)="(?:\s*Like\s*|Reaction button state.*)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
                  match = xmlData.match(likeFallbackRegex);
             }
 
@@ -167,24 +167,41 @@ export class LinkedInEngager {
                 throw new Error(`[${this.deviceId}] [FSM: COMMENT] Text box STILL empty. Giving up.`);
             }
         }
-        const postBtnRegex = /text="(Comment|Post)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
-        const postBtnMatch = commentXmlData.match(postBtnRegex);
-
-        if (postBtnMatch) {
-            const postBounds = this.parseBounds(postBtnMatch[2]!);
-            if (postBounds) {
-                console.log(`[${this.deviceId}] [FSM: COMMENT] Found Submit button at ${postBounds.x}, ${postBounds.y}`);
-                await this.device.tapCoordinate(postBounds.x, postBounds.y);
-            } else {
-                console.warn(`[${this.deviceId}] [FSM: COMMENT] Found Submit button but failed to parse bounds! string: ${postBtnMatch[2]}`);
-                await this.device.pressEnter();
+        const postBtnRegex = /(?:text|content-desc)="(?:Comment|Post)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/ig;
+        const matches = [...commentXmlData.matchAll(postBtnRegex)];
+        let postBounds = null;
+        
+        for (const match of matches) {
+            const bounds = this.parseBounds(match[1]!);
+            // Filter out title bar (y < 250) and bottom nav bar (y > 1800)
+            if (bounds && bounds.y > 250 && bounds.y < 1800) {
+                postBounds = bounds;
+                // If we found a valid button, we can stop searching or keep going to find the lowest one.
+                // Usually the submit button is the lowest valid one before the nav bar.
             }
+        }
+
+        if (postBounds) {
+            console.log(`[${this.deviceId}] [FSM: COMMENT] Found Submit button at ${postBounds.x}, ${postBounds.y}`);
+            await this.device.tapCoordinate(postBounds.x, postBounds.y);
         } else {
             console.warn(`[${this.deviceId}] [FSM: COMMENT] Fallback: Hitting Enter key`);
             await this.device.pressEnter();
         }
 
-        console.log(`✅ [${this.deviceId}] [FSM: COMMENT] Successfully posted comment!`);
+        // --- VERIFICATION STEP ---
+        console.log(`[${this.deviceId}] [FSM: COMMENT] Verifying if comment was published...`);
+        await this.device.sleep(2500); // Wait for network and UI to update
+        const verifyXmlData = await this.device.getUiDumpXml();
+        
+        // If the comment published successfully, the text box should revert to its empty placeholder state
+        if (!emptyPlaceholderRegex.test(verifyXmlData)) {
+            // It did not revert to empty, meaning our text is still stuck in the box!
+            fs.writeFileSync(`./logs/${this.deviceId}_comment_verify_fail.xml`, verifyXmlData);
+            throw new Error(`[${this.deviceId}] [FSM: COMMENT] Verification Failed! Comment text is still in the box. Submit tap failed or network timeout.`);
+        }
+
+        console.log(`✅ [${this.deviceId}] [FSM: COMMENT] Successfully verified and posted comment!`);
         await this.device.sleep(2000);
         return true;
     }
@@ -210,7 +227,7 @@ export class LinkedInEngager {
         // We are already on the post page, no need to establish clean state again.
         // Just find the comment button and click it.
         const xmlData = await this.device.getUiDumpXml();
-        let commentBtnMatch = xmlData.match(/content-desc="Comment"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/);
+        let commentBtnMatch = xmlData.match(/(?:text|content-desc)="Comment"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i);
         
         if (commentBtnMatch) {
             const commentBtnBounds = this.parseBounds(commentBtnMatch[1]!);
@@ -224,6 +241,7 @@ export class LinkedInEngager {
              console.warn(`[${this.deviceId}] [FSM: ENGAGE POST] Could not find Comment button.`);
         }
 
+        const emptyPlaceholderRegex = /text="(?:Add a comment|Leave your thoughts here)(?:\…|\.\.\.)?"[^>]*/i;
         const commentXmlData = await this.device.getUiDumpXml();
 
         // Look for the "Leave your thoughts here..." or "Add a comment..." text box
@@ -260,23 +278,38 @@ export class LinkedInEngager {
         // Submit the comment
         let submitXmlData = await this.device.getUiDumpXml();
         
-        const postBtnRegex = /(?:text|content-desc)="(?:Post|Comment)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
-        const postBtnMatch = submitXmlData.match(postBtnRegex);
-
-        if (postBtnMatch) {
-            const postBounds = this.parseBounds(postBtnMatch[1]!);
-            if (postBounds) {
-                console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Found Submit button at ${postBounds.x}, ${postBounds.y}`);
-                await this.device.tapCoordinate(postBounds.x, postBounds.y);
-            } else {
-                await this.device.pressEnter();
+        const postBtnRegex = /(?:text|content-desc)="(?:Post|Comment)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/ig;
+        const matches = [...submitXmlData.matchAll(postBtnRegex)];
+        let postBounds = null;
+        
+        for (const match of matches) {
+            const bounds = this.parseBounds(match[1]!);
+            // Filter out title bar (y < 250) and bottom nav bar (y > 1800)
+            if (bounds && bounds.y > 250 && bounds.y < 1800) {
+                postBounds = bounds;
             }
+        }
+
+        if (postBounds) {
+            console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Found Submit button at ${postBounds.x}, ${postBounds.y}`);
+            await this.device.tapCoordinate(postBounds.x, postBounds.y);
         } else {
             console.warn(`[${this.deviceId}] [FSM: ENGAGE POST] Fallback: Hitting Enter key`);
             await this.device.pressEnter();
         }
 
-        console.log(`✅ [${this.deviceId}] [FSM: ENGAGE POST] Successfully engaged with post!`);
+        // --- VERIFICATION STEP ---
+        console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Verifying if comment was published...`);
+        await this.device.sleep(2500); // Wait for network and UI to update
+        const verifyXmlData = await this.device.getUiDumpXml();
+        
+        // If the comment published successfully, the text box should revert to its empty placeholder state
+        if (!emptyPlaceholderRegex.test(verifyXmlData)) {
+            fs.writeFileSync(`./logs/${this.deviceId}_engage_verify_fail.xml`, verifyXmlData);
+            throw new Error(`[${this.deviceId}] [FSM: ENGAGE POST] Verification Failed! Comment text is still in the box. Submit tap failed or network timeout.`);
+        }
+
+        console.log(`✅ [${this.deviceId}] [FSM: ENGAGE POST] Successfully verified and posted comment!`);
         await this.device.sleep(2000);
         return true;
     }

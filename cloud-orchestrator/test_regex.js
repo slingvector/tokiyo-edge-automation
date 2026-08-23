@@ -1,0 +1,1 @@
+const fs = require("fs"); const xml = fs.readFileSync("emulator_dump.xml", "utf8"); const regex = /(?:text|content-desc)="(?:Post|Comment)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/ig; const matches = [...xml.matchAll(regex)]; console.log(matches.map(m => m[1]));
