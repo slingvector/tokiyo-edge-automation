@@ -2,7 +2,8 @@ import { Queue, Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { AutonomousAgent } from '../ai/AutonomousAgent';
 
-const connection = new IORedis({ maxRetriesPerRequest: null });
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 
 // The Autonomous Agent Queue
 export const agentQueue = new Queue('autonomous-jobs', { connection });

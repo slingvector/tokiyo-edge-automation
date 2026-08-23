@@ -5,7 +5,8 @@ import { PrismaClient } from '@prisma/client';
 import { io, redisClient } from '../api/Server';
 import { messaging } from '../fcm/FirebaseAdmin';
 
-const connection = new IORedis({ maxRetriesPerRequest: null });
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 const prisma = new PrismaClient();
 
 // The Job Queue
