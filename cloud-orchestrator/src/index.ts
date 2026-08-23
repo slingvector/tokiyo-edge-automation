@@ -20,3 +20,13 @@ agentWorker.on('completed', (job) => {
 agentWorker.on('failed', (job, err) => {
   console.log(`[AgentWorker] Autonomous Session ${job?.id} failed with ${err.message}`);
 });
+
+import { linkedinWorker } from './queue/LinkedInQueue';
+
+linkedinWorker.on('completed', (job) => {
+  console.log(`[LinkedInWorker] LinkedIn Job ${job.id} completed!`);
+});
+
+linkedinWorker.on('failed', (job, err) => {
+  console.log(`[LinkedInWorker] LinkedIn Job ${job?.id} failed with ${err.message}`);
+});

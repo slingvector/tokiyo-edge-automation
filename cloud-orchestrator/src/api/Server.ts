@@ -306,6 +306,37 @@ app.get('/api/v1/agent/autonomous/:id', async (req, res) => {
   });
 });
 
+import { linkedinQueue } from '../queue/LinkedInQueue';
+
+// LinkedIn Automation Endpoint
+app.post('/api/v1/engage/linkedin', async (req, res) => {
+  const { node_id, type, target_id, message } = req.body;
+
+  if (!node_id || !type || !target_id || !message) {
+    return res.status(400).json({ error: 'node_id, type, target_id, and message are required' });
+  }
+
+  // Ensure node is connected
+  const status = await redisClient.hget('nodeStatus', node_id);
+  if (!status) {
+    return res.status(404).json({ error: 'Node not found or not connected' });
+  }
+
+  const jobId = uuidv4();
+
+  // Enqueue Job in BullMQ
+  await linkedinQueue.add('engage-linkedin', {
+    node_id,
+    type,
+    target_id,
+    message
+  }, {
+    jobId: jobId
+  });
+
+  return res.status(201).json({ status: 'ENQUEUED', job_id: jobId });
+});
+
 // Static APK Analysis Proxy Endpoint
 app.post('/api/v1/analyzer/deep-links', async (req, res) => {
   const { apk_path } = req.body;
