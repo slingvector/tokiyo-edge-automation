@@ -226,8 +226,8 @@ export class LinkedInEngager {
 
         const commentXmlData = await this.device.getUiDumpXml();
 
-        // Look for the "Leave your thoughts here..." text box
-        const commentBoxRegex = /text="Leave your thoughts here(?:\…|\.\.\.)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
+        // Look for the "Leave your thoughts here..." or "Add a comment..." text box
+        const commentBoxRegex = /text="(?:Leave your thoughts here|Add a comment)(?:\…|\.\.\.)?"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
         let match = commentXmlData.match(commentBoxRegex);
         
         if (!match) {
@@ -237,6 +237,7 @@ export class LinkedInEngager {
         }
 
         if (!match) {
+            if (!fs.existsSync('./logs')) fs.mkdirSync('./logs');
             fs.writeFileSync(`./logs/${this.deviceId}_engage_post_comment_fail.xml`, commentXmlData);
             throw new Error(`[${this.deviceId}] [FSM: ENGAGE POST] Failed to locate the Comment Text Box.`);
         }

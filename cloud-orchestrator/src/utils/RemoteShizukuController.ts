@@ -87,7 +87,7 @@ export class RemoteShizukuController implements IDeviceController {
         await this.dispatchJobAndWait('force_stop', { package: packageName });
     }
 
-    public async openDeepLink(url: string, packageName: string = 'com.linkedin.android'): Promise<void> {
+    public async openDeepLink(url: string, packageName: string = ''): Promise<void> {
         console.log(`[${this.deviceId}] [Shizuku] openDeepLink: ${url}`);
         await this.dispatchJobAndWait('deep_link', { url, package: packageName });
     }
