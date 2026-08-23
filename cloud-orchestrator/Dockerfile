@@ -29,5 +29,5 @@ COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 EXPOSE 3000
 
-# Start server (run prisma db push to ensure schema is synced, then start)
-CMD npx prisma db push && npx tsx src/index.ts
+# Start server (we removed prisma db push because Supabase's transaction pooler blocks it)
+CMD npx tsx src/index.ts
