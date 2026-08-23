@@ -115,6 +115,12 @@ export class RemoteShizukuController implements IDeviceController {
         await this.dispatchJobAndWait('organic_tap', { x, y });
     }
 
+    public async executeCommand(command: string): Promise<string> {
+        console.log(`[${this.deviceId}] [Shizuku] executeCommand: ${command}`);
+        const data = await this.dispatchJobAndWait('shell', { command });
+        return data.stdout || '';
+    }
+
     public async inputText(text: string): Promise<void> {
         console.log(`[${this.deviceId}] [Shizuku] inputText`);
         await this.dispatchJobAndWait('organic_type', { text });
