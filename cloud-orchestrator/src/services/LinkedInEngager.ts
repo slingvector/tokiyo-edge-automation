@@ -188,6 +188,97 @@ export class LinkedInEngager {
         await this.device.sleep(2000);
         return true;
     }
+    
+    /**
+     * FSM STATE: ENGAGE WITH POST (LIKE & COMMENT)
+     */
+    public async engagePost(postUrl: string, commentText: string) {
+        console.log(`\n=== [FSM: ENGAGE POST] Starting Engage Event on ${this.deviceId} ===`);
+        
+        await this.establishCleanState(postUrl);
+
+        const likeBounds = await this.findLikeButtonCoordinates();
+        if (likeBounds) {
+            console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Found Like button at ${likeBounds.x}, ${likeBounds.y}`);
+            await this.device.tapCoordinate(likeBounds.x, likeBounds.y);
+            console.log(`✅ [${this.deviceId}] [FSM: ENGAGE POST] Successfully Liked the post!`);
+            await this.device.sleep(2000);
+        } else {
+            console.warn(`[${this.deviceId}] [FSM: ENGAGE POST] Could not find Like button, proceeding to comment...`);
+        }
+
+        // We are already on the post page, no need to establish clean state again.
+        // Just find the comment button and click it.
+        const xmlData = await this.device.getUiDumpXml();
+        let commentBtnMatch = xmlData.match(/content-desc="Comment"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/);
+        
+        if (commentBtnMatch) {
+            const commentBtnBounds = this.parseBounds(commentBtnMatch[1]!);
+            if (commentBtnBounds) {
+                console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Found Comment button at ${commentBtnBounds.x}, ${commentBtnBounds.y}`);
+                await this.device.tapCoordinate(commentBtnBounds.x, commentBtnBounds.y);
+                await this.device.sleep(3000); // wait for comment text box to appear
+            }
+        } else {
+             // If we can't find the comment button, the CommentBox regex below might still find the text box directly.
+             console.warn(`[${this.deviceId}] [FSM: ENGAGE POST] Could not find Comment button.`);
+        }
+
+        const commentXmlData = await this.device.getUiDumpXml();
+
+        // Look for the "Leave your thoughts here..." text box
+        const commentBoxRegex = /text="Leave your thoughts here(?:\…|\.\.\.)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
+        let match = commentXmlData.match(commentBoxRegex);
+        
+        if (!match) {
+            // Fallback: search for resource-id directly
+            const idRegex = /resource-id="com.linkedin.android:id\/comment_bar_edit_text"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/;
+            match = commentXmlData.match(idRegex);
+        }
+
+        if (!match) {
+            fs.writeFileSync(`./logs/${this.deviceId}_engage_post_comment_fail.xml`, commentXmlData);
+            throw new Error(`[${this.deviceId}] [FSM: ENGAGE POST] Failed to locate the Comment Text Box.`);
+        }
+
+        const boxBounds = this.parseBounds(match[1]!);
+        if (!boxBounds) {
+             throw new Error(`[${this.deviceId}] [FSM: ENGAGE POST] Failed to parse Comment Text Box bounds.`);
+        }
+
+        console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Found Comment Box at ${boxBounds.x}, ${boxBounds.y}`);
+        await this.device.tapCoordinate(boxBounds.x, boxBounds.y);
+        console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Waiting for keyboard...`);
+        await this.device.sleep(3000);
+
+        console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Typing payload...`);
+        await this.device.inputText(commentText);
+        await this.device.sleep(2000);
+
+        // Submit the comment
+        let submitXmlData = await this.device.getUiDumpXml();
+        
+        const postBtnRegex = /text="(Comment|Post)"[^>]*bounds="(\[\d+,\d+\]\[\d+,\d+\])"/i;
+        const postBtnMatch = submitXmlData.match(postBtnRegex);
+
+        if (postBtnMatch) {
+            const postBounds = this.parseBounds(postBtnMatch[2]!);
+            if (postBounds) {
+                console.log(`[${this.deviceId}] [FSM: ENGAGE POST] Found Submit button at ${postBounds.x}, ${postBounds.y}`);
+                await this.device.tapCoordinate(postBounds.x, postBounds.y);
+            } else {
+                await this.device.pressEnter();
+            }
+        } else {
+            console.warn(`[${this.deviceId}] [FSM: ENGAGE POST] Fallback: Hitting Enter key`);
+            await this.device.pressEnter();
+        }
+
+        console.log(`✅ [${this.deviceId}] [FSM: ENGAGE POST] Successfully engaged with post!`);
+        await this.device.sleep(2000);
+        return true;
+    }
+
     /**
      * FSM STATE: SEND DIRECT MESSAGE (THREAD)
      */

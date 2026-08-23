@@ -28,6 +28,8 @@ export const linkedinWorker = new Worker('linkedin-jobs', async (job: Job) => {
       await engager.sendDirectMessage(target_id, message);
     } else if (type === 'profile') {
       await engager.messageProfile(target_id, message);
+    } else if (type === 'post') {
+      await engager.engagePost(target_id, message);
     } else {
       throw new Error(`Unknown job type: ${type}`);
     }
