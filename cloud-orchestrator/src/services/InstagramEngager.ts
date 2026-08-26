@@ -37,6 +37,7 @@ const MICRO_PAUSE_MAX_MS = 3_500;
 export class InstagramEngager {
     private device: IDeviceController;
     private deviceId: string;
+    private currentPostUrl: string | null = null;
 
     constructor(deviceId: string, controller?: IDeviceController) {
         this.deviceId = deviceId;
@@ -127,16 +128,22 @@ export class InstagramEngager {
 
     private async getSafeUiDumpXml(): Promise<string> {
         let xmlData = await this.device.getUiDumpXml();
-        if (!xmlData || xmlData.trim() === '') {
-            console.log(`[${this.deviceId}] [IG-FSM] UI dump failed (video playing?). Toggling app state...`);
+        if (!xmlData || xmlData.trim() === '' || xmlData.includes('ERROR: could not get idle state') || xmlData.includes('Failed to pull dump') || xmlData.length < 500) {
+            console.warn(`[${this.deviceId}] [IG-FSM] UI dump failed (video playing?). Toggling app state...`);
             
-            // Go to home screen to force the video player to pause/release
-            await this.device.sleep(500);
-            await this.executeAdb(`shell input keyevent 3`); // HOME
+            await this.device.executeAdb(`shell input keyevent 3`); // HOME
             await this.device.sleep(1500);
             
-            // Resume Instagram
-            await this.executeAdb(`shell am start -n com.instagram.android/com.instagram.mainactivity.InstagramMainActivity`);
+            if (this.currentPostUrl) {
+                await this.device.executeAdb(`shell am start -a android.intent.action.VIEW -d "${this.currentPostUrl}" -p com.instagram.android`);
+                if (this.currentPostUrl.includes('/reel/')) {
+                    await this.device.sleep(2000); // Wait for render
+                    console.log(`[${this.deviceId}] [IG-FSM] Tapping screen to pause resumed reel video...`);
+                    await this.device.executeAdb(`shell input tap 160 300`);
+                }
+            } else {
+                await this.device.executeAdb(`shell am start -n com.instagram.android/com.instagram.mainactivity.InstagramMainActivity`);
+            }
             await this.device.sleep(2000);
             
             xmlData = await this.device.getUiDumpXml();
@@ -274,6 +281,7 @@ export class InstagramEngager {
     // ─── FSM: Clean State ───────────────────────────────────────────────────────
 
     private async establishCleanState(postUrl: string): Promise<void> {
+        this.currentPostUrl = postUrl;
         console.log(`[${this.deviceId}] [IG-FSM] Verifying device state...`);
         await this.device.verifyDeviceState();
 
@@ -286,6 +294,12 @@ export class InstagramEngager {
 
         console.log(`[${this.deviceId}] [IG-FSM] Waiting ${RENDER_WAIT_MS / 1000}s for render...`);
         await this.device.sleep(RENDER_WAIT_MS);
+        
+        if (postUrl.includes('/reel/')) {
+            console.log(`[${this.deviceId}] [IG-FSM] Tapping screen to pause reel video (stabilizes uiautomator)...`);
+            await this.device.executeAdb(`shell input tap 160 300`);
+            await this.device.sleep(1500);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -293,11 +307,12 @@ export class InstagramEngager {
     // ═══════════════════════════════════════════════════════════════════════════
 
     public async likePost(postUrl: string): Promise<boolean> {
+        const isReel = postUrl.includes('/reel/');
         console.log(`\n=== [IG-FSM: LIKE] Starting on ${this.deviceId} ===`);
 
         await this.establishCleanState(postUrl);
 
-        const likeResult = await this.findLikeButton();
+        const likeResult = await this.findLikeButton(4, isReel);
         if (!likeResult) {
             this.ensureLogsDir();
             fs.writeFileSync(`./logs/${this.deviceId}_ig_like_fail.xml`, await this.getSafeUiDumpXml());
@@ -330,6 +345,7 @@ export class InstagramEngager {
     // ═══════════════════════════════════════════════════════════════════════════
 
     public async commentOnPost(postUrl: string, commentText: string): Promise<boolean> {
+        const isReel = postUrl.includes('/reel/');
         console.log(`\n=== [IG-FSM: COMMENT] Starting on ${this.deviceId} ===`);
 
         await this.establishCleanState(postUrl);
@@ -404,12 +420,13 @@ export class InstagramEngager {
     // ═══════════════════════════════════════════════════════════════════════════
 
     public async engagePost(postUrl: string, commentText: string): Promise<boolean> {
+        const isReel = postUrl.includes('/reel/');
         console.log(`\n=== [IG-FSM: ENGAGE POST] Starting on ${this.deviceId} ===`);
 
         await this.establishCleanState(postUrl);
 
         // ── LIKE PHASE ──────────────────────────────────────────────────────
-        const likeResult = await this.findLikeButton();
+        const likeResult = await this.findLikeButton(4, isReel);
         if (likeResult && !likeResult.alreadyLiked) {
             console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Tapping Like at ${likeResult.x}, ${likeResult.y}`);
             await this.tapWithJitter(likeResult.x, likeResult.y);
@@ -487,6 +504,66 @@ export class InstagramEngager {
         }
 
         await this.device.sleep(2000);
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FSM: REPOST POST
+    // ═══════════════════════════════════════════════════════════════════════════
+    public async repostPost(postUrl: string): Promise<boolean> {
+        const isReel = postUrl.includes('/reel/');
+        console.log(`[${this.deviceId}] [IG-FSM: REPOST] Starting flow for ${postUrl}`);
+
+        await this.establishCleanState(postUrl);
+        let xmlData = await this.getSafeUiDumpXml();
+
+        // Find Share button
+        let shareBtn = this.findByResourceId(xmlData, 'com.instagram.android:id/row_feed_button_share') ||
+                       this.findByResourceId(xmlData, 'com.instagram.android:id/share_button') ||
+                       this.findByContentDesc(xmlData, 'Share') ||
+                       this.findByContentDesc(xmlData, 'Send post') ||
+                       this.findByContentDesc(xmlData, 'Send reel') ||
+                       this.findByContentDesc(xmlData, 'Send');
+
+        if (!shareBtn && !isReel) {
+            console.log(`[${this.deviceId}] [IG-FSM: REPOST] Scrolling to find Share button...`);
+            await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
+            await this.device.sleep(this.randInt(1500, 2500));
+            xmlData = await this.getSafeUiDumpXml();
+            shareBtn = this.findByResourceId(xmlData, 'com.instagram.android:id/row_feed_button_share') ||
+                       this.findByResourceId(xmlData, 'com.instagram.android:id/share_button') ||
+                       this.findByContentDesc(xmlData, 'Share') ||
+                       this.findByContentDesc(xmlData, 'Send post') ||
+                       this.findByContentDesc(xmlData, 'Send reel') ||
+                       this.findByContentDesc(xmlData, 'Send');
+        }
+
+        if (!shareBtn) {
+            this.ensureLogsDir();
+            fs.writeFileSync(`./logs/${this.deviceId}_ig_repost_sharebtn_fail.xml`, xmlData);
+            throw new Error(`[${this.deviceId}] [IG-FSM: REPOST] Share button not found.`);
+        }
+
+        console.log(`[${this.deviceId}] [IG-FSM: REPOST] Tapping Share at ${shareBtn.x}, ${shareBtn.y}`);
+        await this.tapWithJitter(shareBtn.x, shareBtn.y);
+        await this.device.sleep(this.randInt(3500, 5500));
+
+        const sheetXml = await this.getSafeUiDumpXml();
+        
+        let targetBtn = this.findByContentDesc(sheetXml, 'Repost') ||
+                        this.findByContentDesc(sheetXml, 'Add to story');
+
+        if (!targetBtn) {
+            this.ensureLogsDir();
+            fs.writeFileSync(`./logs/${this.deviceId}_ig_repost_targetbtn_fail.xml`, sheetXml);
+            throw new Error(`[${this.deviceId}] [IG-FSM: REPOST] Repost / Add to story button not found in share sheet.`);
+        }
+
+        console.log(`[${this.deviceId}] [IG-FSM: REPOST] Tapping Target Repost Button at ${targetBtn.x}, ${targetBtn.y}`);
+        await this.tapWithJitter(targetBtn.x, targetBtn.y);
+        await this.device.sleep(this.randInt(4000, 6000));
+
+        console.log(`✅ [${this.deviceId}] [IG-FSM: REPOST] Repost flow completed!`);
         return true;
     }
 
