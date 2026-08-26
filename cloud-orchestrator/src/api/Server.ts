@@ -307,6 +307,7 @@ app.get('/api/v1/agent/autonomous/:id', async (req, res) => {
 });
 
 import { linkedinQueue } from '../queue/LinkedInQueue';
+import { instagramQueue } from '../queue/InstagramQueue';
 
 // LinkedIn Automation Endpoint
 app.post('/api/v1/engage/linkedin', async (req, res) => {
@@ -340,6 +341,112 @@ app.post('/api/v1/engage/linkedin', async (req, res) => {
   });
 
   return res.status(201).json({ status: 'ENQUEUED', job_id: jobId });
+});
+
+// Instagram Automation Endpoint
+app.post('/api/v1/engage/instagram', async (req, res) => {
+  const { node_id, type, target_id, message } = req.body;
+
+  if (!node_id || !type || !target_id) {
+    return res.status(400).json({ error: 'node_id, type, and target_id are required' });
+  }
+
+  // For 'post' and 'comment' types, message is required
+  if ((type === 'post' || type === 'comment') && !message) {
+    return res.status(400).json({ error: 'message is required for post and comment types' });
+  }
+
+  // Ensure node is connected
+  const status = await redisClient.hget('nodeStatus', node_id);
+  if (!status) {
+    return res.status(404).json({ error: 'Node not found or not connected' });
+  }
+
+  const jobId = uuidv4();
+
+  // Enqueue Job in BullMQ
+  await instagramQueue.add('engage-instagram', {
+    node_id,
+    type,      // 'post' | 'like' | 'comment' | 'follow' | 'save'
+    target_id, // Instagram URL (post, reel, or profile)
+    message    // Comment text (required for post/comment, optional for like/follow/save)
+  }, {
+    jobId: jobId,
+    attempts: 10,
+    backoff: {
+      type: 'exponential',
+      delay: 15000
+    }
+  });
+
+  return res.status(201).json({ status: 'ENQUEUED', job_id: jobId });
+});
+
+// Instagram Post Discovery + Bulk Enqueue Endpoint
+app.post('/api/v1/engage/instagram/discover', async (req, res) => {
+  const { node_ids, topics, hashtags, manual_urls, use_explore, max_posts, auto_enqueue, comment_template } = req.body;
+
+  if (!node_ids || !Array.isArray(node_ids) || node_ids.length === 0) {
+    return res.status(400).json({ error: 'node_ids array is required' });
+  }
+
+  try {
+    const { discoverInstagramPosts, TOPIC_HASHTAGS } = require('../services/InstagramDiscovery');
+
+    // Build hashtag list from topics + explicit hashtags
+    const resolvedHashtags: string[] = [
+      ...(hashtags || []),
+      ...((topics || []) as string[]).flatMap((t: string) => TOPIC_HASHTAGS[t] || []),
+    ];
+
+    const posts = await discoverInstagramPosts({
+      manualUrls: manual_urls || [],
+      hashtags: resolvedHashtags,
+      useExplore: use_explore || false,
+      maxPosts: max_posts || 30,
+      verify: true,
+    });
+
+    if (!auto_enqueue || posts.length === 0) {
+      return res.json({ status: 'DISCOVERED', count: posts.length, posts });
+    }
+
+    // Round-robin distribute posts across node_ids
+    const enqueuedJobs: string[] = [];
+    const comment = comment_template || 'Great post! Really insightful perspective.';
+
+    for (let i = 0; i < posts.length; i++) {
+      const node_id = node_ids[i % node_ids.length];
+      const post = posts[i]!;
+      const jobId = uuidv4();
+
+      await instagramQueue.add('engage-instagram', {
+        node_id,
+        type: 'post',
+        target_id: post.url,
+        message: comment,
+      }, {
+        jobId,
+        attempts: 10,
+        backoff: { type: 'exponential', delay: 15000 },
+      });
+
+      enqueuedJobs.push(jobId);
+      console.log(`[Discovery] Enqueued job ${jobId} → node ${node_id} → ${post.url}`);
+    }
+
+    return res.status(201).json({
+      status: 'ENQUEUED',
+      discovered: posts.length,
+      enqueued: enqueuedJobs.length,
+      job_ids: enqueuedJobs,
+      posts,
+    });
+
+  } catch (error: any) {
+    console.error('[Discovery] Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // Static APK Analysis Proxy Endpoint

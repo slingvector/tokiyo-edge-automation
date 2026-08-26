@@ -10,6 +10,10 @@ export interface IDeviceController {
     pressBack(): Promise<void>;
     pressTab(): Promise<void>;
     swipe(x1: number, y1: number, x2: number, y2: number, duration?: number): Promise<void>;
+    executeCommand(command: string): Promise<string>;
+    
+    // Device State Management
+    verifyDeviceState(): Promise<void>;
     
     // Perception API
     getUiDumpXml(): Promise<string>;

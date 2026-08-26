@@ -69,6 +69,15 @@ export class LocalAdbController implements IDeviceController {
         await this.executeAdb(`shell input swipe ${x1} ${y1} ${x2} ${y2} ${duration}`);
     }
 
+    public async executeCommand(command: string): Promise<string> {
+        return await this.executeAdb(`shell ${command}`);
+    }
+
+    public async verifyDeviceState(): Promise<void> {
+        // For local ADB, just ensure the device is responsive
+        await this.executeAdb('shell echo ok');
+    }
+
     public async sleep(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
