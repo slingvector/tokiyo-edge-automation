@@ -152,7 +152,7 @@ export class InstagramEngager {
      * Find the Like button, scrolling if necessary.
      * Returns whether the post is already liked.
      */
-    private async findLikeButton(maxScrolls = 4): Promise<{ x: number, y: number, alreadyLiked: boolean } | null> {
+    private async findLikeButton(maxScrolls = 4, isReel = false): Promise<{ x: number, y: number, alreadyLiked: boolean } | null> {
         for (let i = 0; i <= maxScrolls; i++) {
             let xmlData = await this.getSafeUiDumpXml();
 
@@ -170,10 +170,15 @@ export class InstagramEngager {
             const likeBtn = byIdFeed || byIdReel || byDesc;
             if (likeBtn) return { ...likeBtn, alreadyLiked: false };
 
-            if (!likeBtn) {
+            if (!isReel && i < maxScrolls) {
                 console.log(`[${this.deviceId}] [IG-FSM] Scrolling to find Like button (attempt ${i + 1})...`);
                 await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
                 await this.device.sleep(this.randInt(1500, 2500));
+            } else if (isReel && i === 0) {
+                // If it's a reel, do not swipe. The button is usually there, maybe dump was partial. We can try 1 more dump.
+                await this.device.sleep(2000);
+            } else if (isReel) {
+                break; // Give up, no swipe on reels
             }
         }
         return null;
@@ -333,9 +338,8 @@ export class InstagramEngager {
         let xmlData = await this.getSafeUiDumpXml();
         let commentBtn = this.findCommentButton(xmlData);
 
-        if (!commentBtn) {
+        if (!commentBtn && !isReel) {
             console.log(`[${this.deviceId}] [IG-FSM: COMMENT] Scrolling to find Comment button...`);
-            // Use coordinates that work on 320x640 (emulator) and larger devices
             await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
             await this.device.sleep(this.randInt(1500, 2500));
             xmlData = await this.getSafeUiDumpXml();
@@ -425,9 +429,8 @@ export class InstagramEngager {
         let xmlData = await this.getSafeUiDumpXml();
         let commentBtn = this.findCommentButton(xmlData);
 
-        if (!commentBtn) {
+        if (!commentBtn && !isReel) {
             console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Scrolling to find Comment button...`);
-            // Use coordinates that work on 320x640 (emulator) and larger devices
             await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
             await this.device.sleep(this.randInt(1500, 2500));
             xmlData = await this.getSafeUiDumpXml();
