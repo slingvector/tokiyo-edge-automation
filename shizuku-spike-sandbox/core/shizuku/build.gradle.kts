@@ -18,12 +18,16 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    buildFeatures {
+        aidl = true
+    }
 }
 
 dependencies {
     implementation(project(":core:domain"))
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("org.robolectric:robolectric:4.11.1")

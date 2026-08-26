@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.tokiyo.core.domain.JobDispatcher
 import com.tokiyo.core.domain.interfaces.TelemetryClient
+import com.tokiyo.core.domain.interfaces.IMediaRelay
 import com.tokiyo.core.domain.models.JobPayload
 import com.tokiyo.core.security.SecurityEngine
 import com.tokiyo.core.shizuku.ShizukuExecutor
@@ -24,14 +25,15 @@ import kotlinx.serialization.json.Json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 class AgentBridgeService : Service(), TelemetryClient {
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var nodeId: String
     
-    private val orchestratorUrl = "http://10.0.2.2:3000" 
+    private val orchestratorUrl = "https://tokiyo-orchestrator-507755745990.us-central1.run.app"
     private val samplePublicKey = "e1c79c1742c5a8668cd3313ec0221d86910b51731ab3e6e1069836ad0abad744"
     
     private var socket: Socket? = null
@@ -41,7 +43,14 @@ class AgentBridgeService : Service(), TelemetryClient {
 
     override fun onCreate() {
         super.onCreate()
-        nodeId = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: "unknown_node"
+        val prefs = getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        nodeId = prefs.getString("unique_node_id", null) ?: run {
+            val newId = java.util.UUID.randomUUID().toString().substring(0, 16)
+            prefs.edit().putString("unique_node_id", newId).apply()
+            newId
+        }
+        
+        Log.i("AgentBridgeService", "Using Orchestrator URL: $orchestratorUrl")
         
         val executor = ShizukuExecutor()
         val uiAutomatorService = UiAutomatorService(executor)
@@ -56,7 +65,8 @@ class AgentBridgeService : Service(), TelemetryClient {
             touchDispatcher = TouchDispatcherImpl(executor),
             clipboardInjector = ClipboardInjectorImpl(this, executor),
             appLifecycleController = AppLifecycleControllerImpl(executor),
-            flightRecorder = com.tokiyo.core.uiautomator.FlightRecorderImpl(executor)
+            flightRecorder = com.tokiyo.core.uiautomator.FlightRecorderImpl(executor),
+            mediaRelay = com.tokiyo.shizukuspike.media.MediaRelayImpl(this)
         )
         
         createNotificationChannel()

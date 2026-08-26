@@ -7,12 +7,13 @@ import rikka.shizuku.Shizuku
 class ShizukuExecutor : ActionExecutor {
     override suspend fun executeCommand(command: String): ShellResult {
         return try {
-            if (!Shizuku.pingBinder()) {
-                return ShellResult(-1, "", "Shizuku is not running or not bound.")
+            val process = if (Shizuku.pingBinder()) {
+                createProcess(command)
+            } else {
+                // Fallback for rooted emulators without Shizuku daemon
+                Runtime.getRuntime().exec(arrayOf("su", "-c", command))
             }
 
-            // Execute the command using Shizuku's root shell process via Reflection (since API hides it)
-            val process = createProcess(command)
             
             val stdoutBuilder = java.lang.StringBuilder()
             val stderrBuilder = java.lang.StringBuilder()

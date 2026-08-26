@@ -16,9 +16,7 @@ class UiAutomatorService(
      * Dumps the current UI hierarchy and returns the flat list of nodes.
      */
     override suspend fun dumpHierarchy(): List<UiNode> = withContext(Dispatchers.IO) {
-        // Run dump command directly mapping to stdout
-        val cmd = "uiautomator dump /data/local/tmp/dump.xml > /dev/null 2>&1 && cat /data/local/tmp/dump.xml"
-        val result = actionExecutor.executeCommand(cmd)
+        val result = actionExecutor.executeCommand("uiautomator dump /data/local/tmp/dump.xml && cat /data/local/tmp/dump.xml")
         if (result.exitCode != 0) {
             System.err.println("Failed to dump hierarchy: ${result.stderr}")
             return@withContext emptyList()
@@ -58,7 +56,7 @@ class UiAutomatorService(
             val center = node.getCenterCoordinates()
             if (center != null) {
                 val (x, y) = center
-                val result = actionExecutor.executeCommand("input tap ${x} ${y}")
+                val result = actionExecutor.executeCommand("input tap $x $y")
                 return result.exitCode == 0
             }
         }

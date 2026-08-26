@@ -16,6 +16,8 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        buildConfigField("String", "ORCHESTRATOR_URL", "\"ws://127.0.0.1:3000\"")
     }
 
     buildTypes {
@@ -25,6 +27,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            buildConfigField("String", "ORCHESTRATOR_URL", "\"wss://tokiyo-orchestrator-cloud.run.app\"")
         }
     }
 
@@ -51,6 +54,7 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 

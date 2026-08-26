@@ -5,3 +5,48 @@ patch.xml
 link.txt
 .DS_Store
 *.apk
+
+# Credentials & Environment
+emulator-credentials.json
+.env
+.env.*
+!.env.example
+cloud-orchestrator/.env.*
+google-services.json
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Node
+node_modules/
+dist/
+
+# Android
+build/
+.gradle/
+local.properties
+bin/
+
+# Debug/temp XML dumps
+*.xml
+!**/src/**/*.xml
+!**/res/**/*.xml
+!**/main/**/*.xml
+!**/*.gradle.kts
+
+# Large media
+*.mp4
+*.mov
+
+# Temp scripts & debug files
+cloud-orchestrator/fix_lock.js
+cloud-orchestrator/test_regex.js
+cloud-orchestrator/*_dump.xml
+cloud-orchestrator/current_status*.xml
+audit_results.json
+log.txt
+logcat.txt
+previous_chat.jsonl
+window_dump.xml

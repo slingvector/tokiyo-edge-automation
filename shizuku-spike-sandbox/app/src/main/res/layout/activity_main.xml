@@ -13,11 +13,32 @@
         android:textSize="18sp"
         android:textStyle="bold" />
 
+    <EditText
+        android:id="@+id/etOrchestratorUrl"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:hint="Orchestrator URL (e.g. ws://192.168.x.x:3000)"
+        android:inputType="textUri" />
+
+    <Button
+        android:id="@+id/btnUpdateUrl"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Save URL and Restart Agent" />
+
+    <Button
+        android:id="@+id/btnSetLocal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Set to Local Mode (Mac IP)" />
+
     <Button
         android:id="@+id/btnRunBenchmark"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:text="Run Latency Benchmark" />
 
     <ScrollView

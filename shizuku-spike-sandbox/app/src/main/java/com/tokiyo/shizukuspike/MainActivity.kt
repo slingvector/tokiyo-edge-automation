@@ -1,5 +1,6 @@
 package com.tokiyo.shizukuspike
 
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -38,22 +39,46 @@ class MainActivity : AppCompatActivity() {
         
         if (Shizuku.pingBinder()) {
             updateStatus("Shizuku Binder Active")
-            checkPermissionAndStartServer()
         } else {
-            updateStatus("Waiting for Shizuku Binder...")
+            updateStatus("Shizuku not running. Falling back to native root (su).")
         }
+        checkPermissionAndStartServer()
         
+        val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val defaultUrl = com.tokiyo.shizukuspike.BuildConfig.ORCHESTRATOR_URL
+        val currentUrl = prefs.getString("orchestrator_url", defaultUrl)
+        binding.etOrchestratorUrl.setText(currentUrl)
+
+        binding.btnUpdateUrl.setOnClickListener {
+            val newUrl = binding.etOrchestratorUrl.text.toString()
+            prefs.edit().putString("orchestrator_url", newUrl).apply()
+            log("Saved URL: $newUrl")
+            checkPermissionAndStartServer() // Restarts the service with new URL
+        }
+
+        binding.btnSetLocal.setOnClickListener {
+            val localUrl = "http://127.0.0.1:3000"
+            binding.etOrchestratorUrl.setText(localUrl)
+            prefs.edit().putString("orchestrator_url", localUrl).apply()
+            log("Saved Local URL: $localUrl (ADB Reverse)")
+            checkPermissionAndStartServer()
+        }
+
         binding.btnRunBenchmark.setOnClickListener {
             runLatencyBenchmark()
         }
     }
     
     private fun checkPermissionAndStartServer() {
-        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-            Shizuku.requestPermission(0)
-        } else {
-            startHeadlessServer()
+        try {
+            if (Shizuku.pingBinder() && Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                Shizuku.requestPermission(0)
+            }
+        } catch (e: Exception) {
+            Log.e("ShizukuSpike", "Shizuku permission check failed", e)
         }
+        // Always start the server; ShizukuExecutor will fallback to root 'su' if needed
+        startHeadlessServer()
     }
     
     private fun updateStatus(status: String) {
