@@ -1,0 +1,13 @@
+{
+  "device": "emulator-5554",
+  "results": [
+    {
+      "id": "XDEV-01",
+      "name": "Cross-Device UI Analysis — dump and compare IDs",
+      "passed": false,
+      "error": "Critical engagement button IDs missing on emulator-5554. See dump: /Users/cortex/ventures/tokiyo-edge-automation/cloud-orchestrator/logs/instagram_test/emulator-5554_cross_device_dump_1787761945407.xml",
+      "duration": 14047
+    }
+  ],
+  "totalDuration": 14048
+}
