@@ -345,7 +345,7 @@ app.post('/api/v1/engage/linkedin', async (req, res) => {
 
 // Instagram Automation Endpoint
 app.post('/api/v1/engage/instagram', async (req, res) => {
-  const { node_id, type, target_id, message } = req.body;
+  const { node_id, type, target_id, message, shouldFollow, shouldSave } = req.body;
 
   if (!node_id || !type || !target_id) {
     return res.status(400).json({ error: 'node_id, type, and target_id are required' });
@@ -369,7 +369,9 @@ app.post('/api/v1/engage/instagram', async (req, res) => {
     node_id,
     type,      // 'post' | 'like' | 'comment' | 'follow' | 'save'
     target_id, // Instagram URL (post, reel, or profile)
-    message    // Comment text (required for post/comment, optional for like/follow/save)
+    message,   // Comment text (required for post/comment, optional for like/follow/save)
+    shouldFollow, // Optional: follow the user
+    shouldSave    // Optional: save the post
   }, {
     jobId: jobId,
     attempts: 10,
@@ -384,7 +386,7 @@ app.post('/api/v1/engage/instagram', async (req, res) => {
 
 // Instagram Post Discovery + Bulk Enqueue Endpoint
 app.post('/api/v1/engage/instagram/discover', async (req, res) => {
-  const { node_ids, topics, hashtags, manual_urls, use_explore, max_posts, auto_enqueue, comment_template } = req.body;
+  const { node_ids, topics, hashtags, manual_urls, use_explore, max_posts, auto_enqueue, comment_template, shouldFollow, shouldSave } = req.body;
 
   if (!node_ids || !Array.isArray(node_ids) || node_ids.length === 0) {
     return res.status(400).json({ error: 'node_ids array is required' });
@@ -425,6 +427,8 @@ app.post('/api/v1/engage/instagram/discover', async (req, res) => {
         type: 'post',
         target_id: post.url,
         message: comment,
+        shouldFollow: shouldFollow || false,
+        shouldSave: shouldSave || false,
       }, {
         jobId,
         attempts: 10,

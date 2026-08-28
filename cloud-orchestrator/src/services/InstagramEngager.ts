@@ -38,10 +38,18 @@ export class InstagramEngager {
     private device: IDeviceController;
     private deviceId: string;
     private currentPostUrl: string | null = null;
+    private screenSize: { width: number, height: number } | null = null;
 
     constructor(deviceId: string, controller?: IDeviceController) {
         this.deviceId = deviceId;
         this.device = controller || new LocalAdbController(deviceId);
+    }
+
+    private async getScreenSize() {
+        if (!this.screenSize) {
+            this.screenSize = await this.device.getScreenSize();
+        }
+        return this.screenSize;
     }
 
     // ─── Utilities ─────────────────────────────────────────────────────────────
@@ -131,28 +139,25 @@ export class InstagramEngager {
         if (!xmlData || xmlData.trim() === '' || xmlData.includes('ERROR: could not get idle state') || xmlData.includes('Failed to pull dump') || xmlData.length < 500) {
             console.warn(`[${this.deviceId}] [IG-FSM] UI dump failed (video playing?). Toggling app state...`);
             
-            await this.device.executeAdb(`shell input keyevent 3`); // HOME
+            await this.device.executeCommand(`input keyevent 3`); // HOME
             await this.device.sleep(1500);
             
             if (this.currentPostUrl) {
-                await this.device.executeAdb(`shell am start -a android.intent.action.VIEW -d "${this.currentPostUrl}" -p com.instagram.android`);
+                await this.device.openDeepLink(this.currentPostUrl, IG_PACKAGE);
                 if (this.currentPostUrl.includes('/reel/')) {
                     await this.device.sleep(2000); // Wait for render
                     console.log(`[${this.deviceId}] [IG-FSM] Tapping screen to pause resumed reel video...`);
-                    await this.device.executeAdb(`shell input tap 160 300`);
+                    const size = await this.getScreenSize();
+                    await this.device.tapCoordinate(Math.floor(size.width / 2), Math.floor(size.height / 2));
                 }
             } else {
-                await this.device.executeAdb(`shell am start -n com.instagram.android/com.instagram.mainactivity.InstagramMainActivity`);
+                await this.device.executeCommand(`am start -n ${IG_PACKAGE}/com.instagram.mainactivity.InstagramMainActivity`);
             }
             await this.device.sleep(2000);
             
             xmlData = await this.device.getUiDumpXml();
         }
         return xmlData;
-    }
-
-    private async executeAdb(command: string): Promise<string> {
-        return await (this.device as any).executeAdb(command); // Access underlying adb for hacks
     }
 
     /**
@@ -179,13 +184,80 @@ export class InstagramEngager {
 
             if (!isReel && i < maxScrolls) {
                 console.log(`[${this.deviceId}] [IG-FSM] Scrolling to find Like button (attempt ${i + 1})...`);
-                await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
+                const size = await this.getScreenSize();
+                await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
                 await this.device.sleep(this.randInt(1500, 2500));
             } else if (isReel && i === 0) {
                 // If it's a reel, do not swipe. The button is usually there, maybe dump was partial. We can try 1 more dump.
                 await this.device.sleep(2000);
             } else if (isReel) {
                 break; // Give up, no swipe on reels
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Find the Save button.
+     */
+    private async findSaveButton(maxScrolls = 4, isReel = false): Promise<{ x: number, y: number, alreadySaved: boolean } | null> {
+        for (let i = 0; i <= maxScrolls; i++) {
+            let xmlData = await this.getSafeUiDumpXml();
+
+            const removeSaved = this.findByContentDesc(xmlData, 'Remove from Saved') || this.findByContentDesc(xmlData, 'Saved');
+            if (removeSaved) return { ...removeSaved, alreadySaved: true };
+
+            const byIdFeed = this.findByResourceId(xmlData, 'com.instagram.android:id/row_feed_button_save');
+            const byDesc = this.findByContentDesc(xmlData, 'Save');
+            
+            const saveBtn = byIdFeed || byDesc;
+            if (saveBtn) return { ...saveBtn, alreadySaved: false };
+
+            if (!isReel && i < maxScrolls) {
+                console.log(`[${this.deviceId}] [IG-FSM] Scrolling to find Save button (attempt ${i + 1})...`);
+                const size = await this.getScreenSize();
+                await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
+                await this.device.sleep(this.randInt(1500, 2500));
+            } else if (isReel && i === 0) {
+                await this.device.sleep(2000);
+            } else if (isReel) {
+                break;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Find the Follow button.
+     */
+    private async findFollowButton(maxScrolls = 4, isReel = false): Promise<{ x: number, y: number, alreadyFollowing: boolean } | null> {
+        for (let i = 0; i <= maxScrolls; i++) {
+            let xmlData = await this.getSafeUiDumpXml();
+
+            const following = this.findByContentDesc(xmlData, 'Following');
+            if (following) return { ...following, alreadyFollowing: true };
+
+            const byIdFeed = this.findByResourceId(xmlData, 'com.instagram.android:id/inline_follow_button');
+            
+            let followBtn = byIdFeed;
+            if (!followBtn) {
+                const match = xmlData.match(/content-desc="([^"]*Follow[^"]*)"/i);
+                if (match) {
+                     followBtn = this.findByContentDesc(xmlData, match[1]);
+                }
+            }
+
+            if (followBtn) return { ...followBtn, alreadyFollowing: false };
+
+            if (!isReel && i < maxScrolls) {
+                console.log(`[${this.deviceId}] [IG-FSM] Scrolling to find Follow button (attempt ${i + 1})...`);
+                const size = await this.getScreenSize();
+                await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
+                await this.device.sleep(this.randInt(1500, 2500));
+            } else if (isReel && i === 0) {
+                await this.device.sleep(2000);
+            } else if (isReel) {
+                break;
             }
         }
         return null;
@@ -244,7 +316,11 @@ export class InstagramEngager {
         await this.device.sleep(1000);
 
         console.log(`[${this.deviceId}] [INPUT] Trying Method A (input text)...`);
-        await this.typeViaInputText(text);
+        try {
+            await this.typeViaInputText(text);
+        } catch (err) {
+            console.warn(`[${this.deviceId}] [INPUT Warning] Method A threw an error (likely emoji unsupported):`, err);
+        }
         await this.device.sleep(1500);
 
         // Verify: check if EditText has non-empty text
@@ -281,7 +357,11 @@ export class InstagramEngager {
     // ─── FSM: Clean State ───────────────────────────────────────────────────────
 
     private async establishCleanState(postUrl: string): Promise<void> {
-        this.currentPostUrl = postUrl;
+        if (postUrl === 'SKIP_NAV') {
+            console.log(`[${this.deviceId}] [IG-FSM] Skipping clean state / nav due to SKIP_NAV flag.`);
+            return;
+        }
+        
         console.log(`[${this.deviceId}] [IG-FSM] Verifying device state...`);
         await this.device.verifyDeviceState();
 
@@ -297,7 +377,8 @@ export class InstagramEngager {
         
         if (postUrl.includes('/reel/')) {
             console.log(`[${this.deviceId}] [IG-FSM] Tapping screen to pause reel video (stabilizes uiautomator)...`);
-            await this.device.executeAdb(`shell input tap 160 300`);
+            const size = await this.getScreenSize();
+            await this.device.tapCoordinate(Math.floor(size.width / 2), Math.floor(size.height / 2));
             await this.device.sleep(1500);
         }
     }
@@ -356,7 +437,8 @@ export class InstagramEngager {
 
         if (!commentBtn && !isReel) {
             console.log(`[${this.deviceId}] [IG-FSM: COMMENT] Scrolling to find Comment button...`);
-            await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
+            const size = await this.getScreenSize();
+            await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
             await this.device.sleep(this.randInt(1500, 2500));
             xmlData = await this.getSafeUiDumpXml();
             commentBtn = this.findCommentButton(xmlData);
@@ -419,7 +501,7 @@ export class InstagramEngager {
     // FSM: ENGAGE POST (LIKE + COMMENT) — MVP primary action
     // ═══════════════════════════════════════════════════════════════════════════
 
-    public async engagePost(postUrl: string, commentText: string): Promise<boolean> {
+    public async engagePost(postUrl: string, commentText: string, shouldSave = false, shouldFollow = false): Promise<boolean> {
         const isReel = postUrl.includes('/reel/');
         console.log(`\n=== [IG-FSM: ENGAGE POST] Starting on ${this.deviceId} ===`);
 
@@ -435,20 +517,51 @@ export class InstagramEngager {
         } else if (likeResult?.alreadyLiked) {
             console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Already liked, skipping.`);
         } else {
-            console.warn(`[${this.deviceId}] [IG-FSM: ENGAGE] Like button not found, continuing to comment.`);
+            console.warn(`[${this.deviceId}] [IG-FSM: ENGAGE] Like button not found, continuing.`);
         }
 
-        // ── STEALTH DELAY between Like and Comment ───────────────────────────
-        await this.stealthDelay('comment action');
+        // ── SAVE PHASE ──────────────────────────────────────────────────────
+        if (shouldSave) {
+            await this.stealthDelay('save action');
+            const saveResult = await this.findSaveButton(2, isReel);
+            if (saveResult && !saveResult.alreadySaved) {
+                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Tapping Save at ${saveResult.x}, ${saveResult.y}`);
+                await this.tapWithJitter(saveResult.x, saveResult.y);
+                console.log(`✅ [${this.deviceId}] [IG-FSM: ENGAGE] Post Saved!`);
+                await this.microPause();
+            } else if (saveResult?.alreadySaved) {
+                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Already saved, skipping.`);
+            } else {
+                console.warn(`[${this.deviceId}] [IG-FSM: ENGAGE] Save button not found.`);
+            }
+        }
 
-        // ── COMMENT PHASE ────────────────────────────────────────────────────
+        // ── FOLLOW PHASE ────────────────────────────────────────────────────
+        if (shouldFollow) {
+            await this.stealthDelay('follow action');
+            const followResult = await this.findFollowButton(2, isReel);
+            if (followResult && !followResult.alreadyFollowing) {
+                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Tapping Follow at ${followResult.x}, ${followResult.y}`);
+                await this.tapWithJitter(followResult.x, followResult.y);
+                console.log(`✅ [${this.deviceId}] [IG-FSM: ENGAGE] User Followed!`);
+                await this.microPause();
+            } else if (followResult?.alreadyFollowing) {
+                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Already following, skipping.`);
+            } else {
+                console.warn(`[${this.deviceId}] [IG-FSM: ENGAGE] Follow button not found.`);
+            }
+        }
+
+        // ── COMMENT PHASE ───────────────────────────────────────────────────
+        await this.stealthDelay('comment action');
         // Get fresh UI dump after like + delay
         let xmlData = await this.getSafeUiDumpXml();
         let commentBtn = this.findCommentButton(xmlData);
 
         if (!commentBtn && !isReel) {
             console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Scrolling to find Comment button...`);
-            await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
+            const size = await this.getScreenSize();
+            await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
             await this.device.sleep(this.randInt(1500, 2500));
             xmlData = await this.getSafeUiDumpXml();
             commentBtn = this.findCommentButton(xmlData);
@@ -527,7 +640,8 @@ export class InstagramEngager {
 
         if (!shareBtn && !isReel) {
             console.log(`[${this.deviceId}] [IG-FSM: REPOST] Scrolling to find Share button...`);
-            await this.device.swipe(160, 400, 160, 200, this.randInt(400, 700));
+            const size = await this.getScreenSize();
+            await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
             await this.device.sleep(this.randInt(1500, 2500));
             xmlData = await this.getSafeUiDumpXml();
             shareBtn = this.findByResourceId(xmlData, 'com.instagram.android:id/row_feed_button_share') ||
@@ -561,6 +675,32 @@ export class InstagramEngager {
 
         console.log(`[${this.deviceId}] [IG-FSM: REPOST] Tapping Target Repost Button at ${targetBtn.x}, ${targetBtn.y}`);
         await this.tapWithJitter(targetBtn.x, targetBtn.y);
+        
+        // Wait for Story Editor to load
+        console.log(`[${this.deviceId}] [IG-FSM: REPOST] Waiting for Story Editor to load...`);
+        await this.device.sleep(this.randInt(5000, 7000));
+        
+        const storyEditorXml = await this.getSafeUiDumpXml();
+        
+        // Find "Your story", "Share", or Next arrow
+        let finalShareBtn = this.findByContentDesc(storyEditorXml, 'Your story') ||
+                            this.findByContentDesc(storyEditorXml, 'Your Story') ||
+                            this.findByContentDesc(storyEditorXml, 'Share to Your story') ||
+                            this.findByContentDesc(storyEditorXml, 'Share') ||
+                            this.findByResourceId(storyEditorXml, 'com.instagram.android:id/share_to_story_button') ||
+                            this.findByResourceId(storyEditorXml, 'com.instagram.android:id/toolbar_share_button');
+
+        if (!finalShareBtn) {
+            this.ensureLogsDir();
+            fs.writeFileSync(`./logs/${this.deviceId}_ig_repost_finalbtn_fail.xml`, storyEditorXml);
+            console.warn(`[${this.deviceId}] [IG-FSM: REPOST] Final 'Your Story' button not found! Saved dump to logs. Attempting blind tap at bottom left...`);
+            // Blind tap at bottom left as fallback (typically where "Your Story" is located)
+            const size = await this.getScreenSize();
+            finalShareBtn = { x: Math.floor(size.width * 0.2), y: Math.floor(size.height * 0.95) };
+        }
+
+        console.log(`[${this.deviceId}] [IG-FSM: REPOST] Tapping Final Share to Story at ${finalShareBtn.x}, ${finalShareBtn.y}`);
+        await this.tapWithJitter(finalShareBtn.x, finalShareBtn.y);
         await this.device.sleep(this.randInt(4000, 6000));
 
         console.log(`✅ [${this.deviceId}] [IG-FSM: REPOST] Repost flow completed!`);

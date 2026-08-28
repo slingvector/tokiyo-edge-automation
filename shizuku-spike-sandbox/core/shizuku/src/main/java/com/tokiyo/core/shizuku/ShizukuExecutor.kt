@@ -10,8 +10,28 @@ class ShizukuExecutor : ActionExecutor {
             val process = if (Shizuku.pingBinder()) {
                 createProcess(command)
             } else {
-                // Fallback for rooted emulators without Shizuku daemon
-                Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+                val dir = java.io.File("/data/data/com.tokiyo.shizukuspike/files")
+                dir.mkdirs()
+                val cmdFile = java.io.File(dir, "command.txt")
+                val doneFile = java.io.File(dir, "done.txt")
+                
+                doneFile.delete()
+                cmdFile.writeText(command)
+                
+                var success = false
+                for (i in 0..50) {
+                    if (doneFile.exists()) {
+                        success = true
+                        break
+                    }
+                    Thread.sleep(200)
+                }
+                
+                if (!success) {
+                    throw IllegalStateException("Root daemon not responding! Run ./setup_emulators.sh on your host machine to enable Shizuku bypass for emulators.")
+                }
+                
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", "cat /data/data/com.tokiyo.shizukuspike/files/output.txt"))
             }
 
             

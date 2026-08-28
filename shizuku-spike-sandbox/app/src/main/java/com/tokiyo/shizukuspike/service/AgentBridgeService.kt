@@ -10,11 +10,13 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.tokiyo.core.domain.JobDispatcher
+import com.tokiyo.core.domain.CompiledScriptDispatcher
 import com.tokiyo.core.domain.interfaces.TelemetryClient
 import com.tokiyo.core.domain.interfaces.IMediaRelay
 import com.tokiyo.core.domain.models.JobPayload
 import com.tokiyo.core.security.SecurityEngine
 import com.tokiyo.core.shizuku.ShizukuExecutor
+import com.tokiyo.core.shizuku.CompiledScriptExecutor
 import com.tokiyo.core.uiautomator.AppLifecycleControllerImpl
 import com.tokiyo.core.uiautomator.UiAutomatorService
 
@@ -33,13 +35,14 @@ class AgentBridgeService : Service(), TelemetryClient {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var nodeId: String
     
-    private val orchestratorUrl = "https://tokiyo-orchestrator-507755745990.us-central1.run.app"
+    private lateinit var orchestratorUrl: String
     private val samplePublicKey = "e1c79c1742c5a8668cd3313ec0221d86910b51731ab3e6e1069836ad0abad744"
     
     private var socket: Socket? = null
     private val json = Json { ignoreUnknownKeys = true }
     
     private lateinit var jobDispatcher: JobDispatcher
+    private lateinit var compiledScriptDispatcher: CompiledScriptDispatcher
 
     override fun onCreate() {
         super.onCreate()
@@ -50,9 +53,12 @@ class AgentBridgeService : Service(), TelemetryClient {
             newId
         }
         
+        orchestratorUrl = prefs.getString("orchestrator_url", "http://127.0.0.1:3000") ?: "http://127.0.0.1:3000"
+        
         Log.i("AgentBridgeService", "Using Orchestrator URL: $orchestratorUrl")
         
         val executor = ShizukuExecutor()
+        val compiledExecutor = CompiledScriptExecutor()
         val uiAutomatorService = UiAutomatorService(executor)
         
         jobDispatcher = JobDispatcher(
@@ -67,6 +73,14 @@ class AgentBridgeService : Service(), TelemetryClient {
             appLifecycleController = AppLifecycleControllerImpl(executor),
             flightRecorder = com.tokiyo.core.uiautomator.FlightRecorderImpl(executor),
             mediaRelay = com.tokiyo.shizukuspike.media.MediaRelayImpl(this)
+        )
+        
+        compiledScriptDispatcher = CompiledScriptDispatcher(
+            scope = scope,
+            nodeId = nodeId,
+            verifier = SecurityEngine(samplePublicKey),
+            telemetry = this,
+            executor = compiledExecutor
         )
         
         createNotificationChannel()
@@ -135,6 +149,21 @@ class AgentBridgeService : Service(), TelemetryClient {
                     jobDispatcher.dispatch(payload, rawJsonString)
                 } catch (e: Exception) {
                     Log.e("AgentBridgeService", "Error parsing job", e)
+                }
+            }
+
+            socket?.on("dispatch_compiled_script") { args ->
+                try {
+                    val data = args[0] as JSONObject
+                    val rawJsonString = data.toString()
+                    val payload = json.decodeFromString<JobPayload>(rawJsonString)
+                    
+                    Log.i("AgentBridgeService", "Received compiled script job: ${payload.job_id}")
+                    
+                    // Dispatch to Service Layer
+                    compiledScriptDispatcher.dispatch(payload, rawJsonString)
+                } catch (e: Exception) {
+                    Log.e("AgentBridgeService", "Error parsing compiled script job", e)
                 }
             }
 

@@ -10,7 +10,7 @@ const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 export const instagramQueue = new Queue('instagram-jobs', { connection });
 
 export const instagramWorker = new Worker('instagram-jobs', async (job: Job) => {
-  const { node_id, type, target_id, message } = job.data;
+  const { node_id, type, target_id, message, shouldFollow, shouldSave } = job.data;
   
   console.log(`[InstagramWorker] Starting ${type} job for node ${node_id} to target ${target_id}`);
 
@@ -44,8 +44,10 @@ export const instagramWorker = new Worker('instagram-jobs', async (job: Job) => 
   
   try {
     if (type === 'post') {
-      // Like + Comment (MVP primary action)
-      await engager.engagePost(target_id, message);
+      // Like + Comment (MVP primary action, now with optional Follow/Save)
+      if (shouldFollow) console.log(`[InstagramWorker] Job ${job.id}: Follow enabled for post ${target_id}`);
+      if (shouldSave) console.log(`[InstagramWorker] Job ${job.id}: Save enabled for post ${target_id}`);
+      await engager.engagePost(target_id, message, shouldSave, shouldFollow);
     } else if (type === 'like') {
       // Like only
       await engager.likePost(target_id);
