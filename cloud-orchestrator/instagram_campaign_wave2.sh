@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ORCHESTRATOR_URL="${1:-https://tokiyo-orchestrator-XXXX-uc.a.run.app}"
+ORCHESTRATOR_URL="${1:-http://localhost:3000}"
 ENDPOINT_FLEET="${ORCHESTRATOR_URL}/api/v1/fleet/status"
 ENDPOINT_DISCOVER="${ORCHESTRATOR_URL}/api/v1/engage/instagram/discover"
 ENDPOINT_ENGAGE="${ORCHESTRATOR_URL}/api/v1/engage/instagram"
@@ -52,16 +52,21 @@ DISCOVER_PAYLOAD=$(cat <<EOF
 {
   "node_ids": $NODE_ARRAY,
   "manual_urls": [
-    "https://www.instagram.com/reel/DcIFknJT1el/",
-    "https://www.instagram.com/reel/DcXN-ShzHjT/",
-    "https://www.instagram.com/reel/DcXNWvNT1BB/"
+    "https://www.instagram.com/p/Dckt7aMyEV6/",
+    "https://www.instagram.com/reels/DcipTdiNrIg/",
+    "https://www.instagram.com/reels/Dcdn00joIxS/",
+    "https://www.instagram.com/reels/DXFBOdbjIo9/",
+    "https://www.instagram.com/reels/DcfuM6nIU7a/",
+    "https://www.instagram.com/reels/DceXA9wPi7X/",
+    "https://www.instagram.com/reels/DZaMwAoNx0u/",
+    "https://www.instagram.com/reels/DcS7mwvJZNZ/",
+    "https://www.instagram.com/reels/DcktTykpl48/",
+    "https://www.instagram.com/reels/Dcfto9hSVM5/"
   ],
   "use_explore": false,
-  "max_posts": $((NODE_COUNT * 4)),
+  "max_posts": 20,
   "auto_enqueue": true,
-  "shouldFollow": true,
-  "shouldSave": true,
-  "comment_template": "Absolutely brilliant execution here! 🚀 Would love to connect and see what you build next."
+  "comment_template": "The aerial perspective here is absolutely stunning! 🔥 What drone setup are you flying? The framing and movement are so smooth. Would love to connect!"
 }
 EOF
 )

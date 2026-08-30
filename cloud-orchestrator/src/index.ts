@@ -30,3 +30,17 @@ linkedinWorker.on('completed', (job) => {
 linkedinWorker.on('failed', (job, err) => {
   console.log(`[LinkedInWorker] LinkedIn Job ${job?.id} failed with ${err.message}`);
 });
+
+import { compiledWorker } from './queue/CompiledScriptDispatcher';
+
+compiledWorker.on('completed', (job) => {
+  console.log(`[CompiledWorker] Job ${job.id} dispatched!`);
+});
+
+compiledWorker.on('failed', (job, err) => {
+  console.log(`[CompiledWorker] Job ${job?.id} failed with ${err.message}`);
+});
+
+compiledWorker.on('error', (err) => {
+  console.error('[CompiledWorker] Worker error:', err);
+});

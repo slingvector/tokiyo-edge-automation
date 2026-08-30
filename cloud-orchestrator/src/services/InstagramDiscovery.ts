@@ -112,9 +112,9 @@ async function verifyUrl(url: string): Promise<boolean> {
  */
 function discoverManual(urls: string[]): DiscoveredPost[] {
     return urls
-        .filter(url => url.includes('/p/') || url.includes('/reel/'))
+        .filter(url => url.includes('/p/') || url.includes('/reel/') || url.includes('/reels/'))
         .map(url => {
-            const match = url.match(/\/(?:p|reel)\/([A-Za-z0-9_\-]+)/);
+            const match = url.match(/\/(?:p|reel|reels)\/([A-Za-z0-9_\-]+)/);
             const shortcode = match?.[1] ?? url.split('/').filter(Boolean).pop() ?? '';
             return {
                 url: url.endsWith('/') ? url : `${url}/`,

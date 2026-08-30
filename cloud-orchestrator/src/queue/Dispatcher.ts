@@ -21,13 +21,9 @@ export const worker = new Worker('node-jobs', async (job: Job) => {
   // Check if node is connected using Redis
   const socketId = await redisClient.hget('connectedNodes', node_id);
 
-  // 1. Sign the payload
-  const signedPayload = signer.signPayload({
-    job_id: job.id,
-    node_id,
-    action,
-    params
-  });
+  // The payload (params) was already freshly signed by RemoteShizukuController before queuing.
+  // This ensures retries get a fresh TTL signature.
+  const signedPayload = params;
 
   try {
     // Update DB status to DISPATCHED

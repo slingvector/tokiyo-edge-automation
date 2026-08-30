@@ -2,13 +2,14 @@ import { InstagramEngager } from '../services/InstagramEngager';
 
 async function runTest() {
     console.log("Starting test...");
-    const engager = new InstagramEngager('emulator-5554');
+    const deviceId = process.argv[2] || 'emulator-5554';
+    const engager = new InstagramEngager(deviceId);
 
     const reelUrl = 'https://www.instagram.com/reel/DcdtfD0BZsT';
     
     try {
-        console.log("Attempting to Like and Comment...");
-        await engager.engagePost(reelUrl, "Awesome! Love this.");
+        console.log("Attempting to Like, Save, Follow, and Comment...");
+        await engager.engagePost(reelUrl, "Awesome! Love this.", true, true);
         
         console.log("Attempting to Repost (Add to story)...");
         await engager.repostPost(reelUrl);

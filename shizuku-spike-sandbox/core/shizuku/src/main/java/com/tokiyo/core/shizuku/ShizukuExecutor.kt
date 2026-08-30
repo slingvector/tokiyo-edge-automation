@@ -19,7 +19,7 @@ class ShizukuExecutor : ActionExecutor {
                 cmdFile.writeText(command)
                 
                 var success = false
-                for (i in 0..50) {
+                for (i in 0..75) {
                     if (doneFile.exists()) {
                         success = true
                         break

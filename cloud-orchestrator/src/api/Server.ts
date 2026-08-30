@@ -431,7 +431,8 @@ app.post('/api/v1/engage/instagram/discover', async (req, res) => {
         shouldSave: shouldSave || false,
       }, {
         jobId,
-        attempts: 10,
+        priority: 1,
+        attempts: 2,
         backoff: { type: 'exponential', delay: 15000 },
       });
 

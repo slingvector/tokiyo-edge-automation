@@ -32,8 +32,10 @@ export class LocalAdbController implements IDeviceController {
     }
 
     public async openDeepLink(url: string, packageName?: string): Promise<void> {
-        const packageArg = packageName ? ` -p ${packageName}` : '';
-        await this.executeAdb(`shell am start -a android.intent.action.VIEW -d "${url}"${packageArg}`);
+        // We drop the packageName (-p) argument because Android 12+ strict intent resolution 
+        // will reject it if it doesn't perfectly match the component's intent filter.
+        // Instead, we rely on Android's verified App Links (`pm set-app-links`).
+        await this.executeAdb(`shell am start -a android.intent.action.VIEW -d "${url}"`);
     }
 
     public async getUiDumpXml(): Promise<string> {
@@ -71,6 +73,13 @@ export class LocalAdbController implements IDeviceController {
         await this.executeAdb(`shell input text "${text}"`);
     }
 
+    public async pasteText(text: string): Promise<void> {
+        const escaped = text.replace(/'/g, "\\'");
+        await this.executeAdb(`shell am broadcast -a clipper.set -e text '${escaped}'`);
+        await this.sleep(1000);
+        await this.executeAdb(`shell input keyevent 279`); // KEYCODE_PASTE
+    }
+
     public async pressEnter(): Promise<void> {
         await this.executeAdb(`shell input keyevent 66`);
     }
@@ -98,6 +107,15 @@ export class LocalAdbController implements IDeviceController {
 
     public async sleep(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    public async getScreenSize(): Promise<{ width: number, height: number }> {
+        const out = await this.executeAdb('shell wm size');
+        const match = out.match(/(\d+)x(\d+)/);
+        if (match) {
+            return { width: parseInt(match[1]!), height: parseInt(match[2]!) };
+        }
+        return { width: 1080, height: 2340 }; // fallback
     }
 
     public async getOcrCoordinates(targetText: string): Promise<{x: number, y: number} | null> {

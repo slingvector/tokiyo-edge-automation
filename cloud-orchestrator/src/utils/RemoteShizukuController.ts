@@ -4,6 +4,7 @@ import { telemetryEvents } from '../api/Server';
 import { jobQueue } from '../queue/Dispatcher';
 import { PrismaClient } from '@prisma/client';
 import zlib from 'zlib';
+import { signer } from '../crypto/Signer';
 
 const prisma = new PrismaClient();
 
@@ -23,12 +24,20 @@ export class RemoteShizukuController implements IDeviceController {
             create: { id: this.deviceId }
         });
 
+        // Sign the payload freshly on every dispatch (crucial for BullMQ retries)
+        const signedPayload = signer.signPayload({
+            job_id: jobId,
+            node_id: this.deviceId,
+            action,
+            params
+        });
+
         await prisma.job.create({
             data: {
                 id: jobId,
                 nodeId: this.deviceId,
                 action: action,
-                payload: params,
+                payload: signedPayload,
                 status: 'PENDING'
             }
         });
@@ -36,7 +45,7 @@ export class RemoteShizukuController implements IDeviceController {
         await jobQueue.add('dispatch-job', {
             node_id: this.deviceId,
             action,
-            params
+            params: signedPayload
         }, { jobId });
 
         return new Promise((resolve, reject) => {
@@ -58,20 +67,20 @@ export class RemoteShizukuController implements IDeviceController {
     public async verifyDeviceState(): Promise<void> {
         console.log(`[${this.deviceId}] [Shizuku] verifyDeviceState`);
         try {
-            const powerData = await this.dispatchJobAndWait('shell', { command: 'dumpsys power' });
+            const powerData = await this.dispatchJobAndWait('shell', { command: 'dumpsys power | grep -E "mWakefulness|state="' });
             if (powerData.stdout && (powerData.stdout.includes('mWakefulness=Asleep') || powerData.stdout.includes('state=OFF'))) {
                 console.log(`[${this.deviceId}] Screen is OFF. Attempting to wake...`);
                 await this.dispatchJobAndWait('shell', { command: 'input keyevent 224' });
                 await this.sleep(1000);
             }
 
-            const windowData = await this.dispatchJobAndWait('shell', { command: 'dumpsys window' });
+            const windowData = await this.dispatchJobAndWait('shell', { command: 'dumpsys window | grep mDreamingLockscreen' });
             if (windowData.stdout && windowData.stdout.includes('mDreamingLockscreen=true')) {
                 console.log(`[${this.deviceId}] Screen is LOCKED. Attempting to unlock...`);
                 await this.dispatchJobAndWait('shell', { command: 'input keyevent 82' });
                 await this.sleep(1000);
                 
-                const windowDataAfter = await this.dispatchJobAndWait('shell', { command: 'dumpsys window' });
+                const windowDataAfter = await this.dispatchJobAndWait('shell', { command: 'dumpsys window | grep mDreamingLockscreen' });
                 if (windowDataAfter.stdout && windowDataAfter.stdout.includes('mDreamingLockscreen=true')) {
                      throw new Error(`[${this.deviceId}] Critical Error: Device is locked with a secure Keyguard (PIN/Pattern). Automation cannot proceed. Please unlock manually or run setup_device.sh.`);
                 }
@@ -87,9 +96,11 @@ export class RemoteShizukuController implements IDeviceController {
         await this.dispatchJobAndWait('force_stop', { package: packageName });
     }
 
-    public async openDeepLink(url: string, packageName: string = ''): Promise<void> {
-        console.log(`[${this.deviceId}] [Shizuku] openDeepLink: ${url}`);
-        await this.dispatchJobAndWait('deep_link', { url, package: packageName });
+    public async openDeepLink(url: string, packageName?: string): Promise<void> {
+        // We drop the packageName (-p) argument because Android 12+ strict intent resolution 
+        // will reject it if it doesn't perfectly match the component's intent filter.
+        // Instead, we rely on Android's verified App Links (`pm set-app-links`).
+        await this.executeCommand(`am start -a android.intent.action.VIEW -d "${url}"`);
     }
 
     public async getUiDumpXml(): Promise<string> {
@@ -100,14 +111,7 @@ export class RemoteShizukuController implements IDeviceController {
         }
 
         const cleanUiDump = telemetryData.ui_dump.replace("UI hierchary dumped to: /data/local/tmp/dump.xml", "").trim();
-        
-        try {
-            const xmlBuffer = zlib.gunzipSync(Buffer.from(cleanUiDump, 'base64'));
-            return xmlBuffer.toString('utf-8');
-        } catch (gzErr) {
-            console.warn(`[${this.deviceId}] Failed to gunzip XML, falling back to raw decode`, gzErr);
-            return Buffer.from(cleanUiDump, 'base64').toString('utf-8');
-        }
+        return Buffer.from(cleanUiDump, 'base64').toString('utf-8');
     }
 
     public async tapCoordinate(x: number, y: number): Promise<void> {
@@ -124,6 +128,11 @@ export class RemoteShizukuController implements IDeviceController {
     public async inputText(text: string): Promise<void> {
         console.log(`[${this.deviceId}] [Shizuku] inputText`);
         await this.dispatchJobAndWait('organic_type', { text });
+    }
+
+    public async pasteText(text: string): Promise<void> {
+        console.log(`[${this.deviceId}] [Shizuku] pasteText`);
+        await this.dispatchJobAndWait('paste_text', { text });
     }
 
     public async pressEnter(): Promise<void> {
@@ -153,5 +162,14 @@ export class RemoteShizukuController implements IDeviceController {
     public async getOcrCoordinates(targetText: string): Promise<{x: number, y: number} | null> {
         console.log(`[${this.deviceId}] [Shizuku] getOcrCoordinates: ${targetText}`);
         return null;
+    }
+
+    public async getScreenSize(): Promise<{ width: number, height: number }> {
+        const out = await this.executeCommand('wm size');
+        const match = out.match(/(\d+)x(\d+)/);
+        if (match) {
+            return { width: parseInt(match[1]!), height: parseInt(match[2]!) };
+        }
+        return { width: 1080, height: 2340 }; // fallback
     }
 }

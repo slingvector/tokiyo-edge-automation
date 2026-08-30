@@ -8,6 +8,7 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 
 export const instagramQueue = new Queue('instagram-jobs', { connection });
+export const instagramDlq = new Queue('instagram-dlq', { connection });
 
 export const instagramWorker = new Worker('instagram-jobs', async (job: Job) => {
   const { node_id, type, target_id, message, shouldFollow, shouldSave } = job.data;
@@ -44,10 +45,8 @@ export const instagramWorker = new Worker('instagram-jobs', async (job: Job) => 
   
   try {
     if (type === 'post') {
-      // Like + Comment (MVP primary action, now with optional Follow/Save)
-      if (shouldFollow) console.log(`[InstagramWorker] Job ${job.id}: Follow enabled for post ${target_id}`);
-      if (shouldSave) console.log(`[InstagramWorker] Job ${job.id}: Save enabled for post ${target_id}`);
-      await engager.engagePost(target_id, message, shouldSave, shouldFollow);
+      // Like + Comment (MVP primary action)
+      await engager.engagePost(target_id, message);
     } else if (type === 'like') {
       // Like only
       await engager.likePost(target_id);
@@ -62,7 +61,27 @@ export const instagramWorker = new Worker('instagram-jobs', async (job: Job) => 
     }
     console.log(`[InstagramWorker] Job ${job.id} completed successfully`);
   } catch (error: any) {
-    console.error(`[InstagramWorker] Error in job ${job.id}:`, error.message);
+    console.error(`[InstagramWorker] Error in job ${job.id} (Attempt ${job.attemptsMade}):`, error.message);
+    
+    // Priority Degradation & DLQ Logic
+    if (job.attemptsMade >= 2) {
+      const currentPriority = job.opts.priority || 1;
+      
+      if (currentPriority === 1) {
+        console.log(`[InstagramWorker] Job ${job.id} failed 2 times at P1. Demoting to P2...`);
+        await instagramQueue.add(job.name, job.data, {
+          priority: 2,
+          attempts: 2,
+          backoff: { type: 'exponential', delay: 30000 }
+        });
+      } else if (currentPriority >= 2) {
+        console.log(`[InstagramWorker] Job ${job.id} failed 2 times at P2. Moving to DLQ...`);
+        await instagramDlq.add(job.name, job.data, {
+          attempts: 1
+        });
+      }
+    }
+    
     throw error;
   } finally {
     await redisClient.del(lockKey);

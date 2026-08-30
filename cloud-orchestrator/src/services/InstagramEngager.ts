@@ -263,94 +263,135 @@ export class InstagramEngager {
         return null;
     }
 
-    /**
-     * Find the Comment button.
-     */
-    private findCommentButton(xmlData: string): { x: number, y: number } | null {
-        let byId = this.findByResourceId(xmlData, 'com.instagram.android:id/row_feed_button_comment');
-        if (byId) return byId;
-        
-        byId = this.findByResourceId(xmlData, 'com.instagram.android:id/comment_button');
-        if (byId) return byId;
+    // ─── Comment Strategy Pattern ──────────────────────────────────────────────
 
-        return this.findByContentDesc(xmlData, 'Comment');
+    /**
+     * Find the Comment Target using multiple strategies.
+     * Strategy 1: Fast Scan
+     * Strategy 2: Deep Scroll
+     * Strategy 3: Zero-Hop Reset
+     */
+    private async findCommentTargetWithStrategies(postUrl: string, isReel: boolean): Promise<{ x: number, y: number, isDirectInput: boolean } | null> {
+        let target = await this.strategy1FastScan();
+        if (target) return target;
+
+        if (!isReel) {
+            target = await this.strategy2DeepScroll();
+            if (target) return target;
+
+            target = await this.strategy3ZeroHopReset(postUrl);
+            if (target) return target;
+        } else {
+            console.log(`[${this.deviceId}] [IG-FSM] Reel detected, skipping scroll strategies.`);
+        }
+
+        return null;
+    }
+
+    private async strategy1FastScan(): Promise<{ x: number, y: number, isDirectInput: boolean } | null> {
+        console.log(`[${this.deviceId}] [IG-FSM] Executing Strategy 1: Fast Scan...`);
+        const xmlData = await this.getSafeUiDumpXml();
+        return this.parseCommentTargetFromXml(xmlData);
+    }
+
+    private async strategy2DeepScroll(): Promise<{ x: number, y: number, isDirectInput: boolean } | null> {
+        console.log(`[${this.deviceId}] [IG-FSM] Executing Strategy 2: Deep Scroll...`);
+        const maxScrolls = 12; // Increased for long captions
+        const size = await this.getScreenSize();
+        
+        for (let i = 0; i < maxScrolls; i++) {
+            console.log(`[${this.deviceId}] [IG-FSM] Deep scroll attempt ${i + 1}/${maxScrolls}...`);
+            await this.device.swipe(
+                Math.floor(size.width / 2),
+                Math.floor(size.height * 0.7),
+                Math.floor(size.width / 2),
+                Math.floor(size.height * 0.2),
+                this.randInt(400, 700)
+            );
+            await this.device.sleep(this.randInt(1500, 2500));
+            
+            let xmlData = await this.getSafeUiDumpXml();
+            const target = this.parseCommentTargetFromXml(xmlData);
+            if (target) {
+                console.log(`[${this.deviceId}] [IG-FSM] Strategy 2 Success after ${i+1} scrolls.`);
+                return target;
+            }
+            
+            // Break early if we hit the end of feed or suggested posts
+            if (xmlData.includes('Suggested for you') || xmlData.includes('More posts')) {
+                 console.log(`[${this.deviceId}] [IG-FSM] Reached end of post content.`);
+                 break;
+            }
+        }
+        return null;
+    }
+
+    private async strategy3ZeroHopReset(postUrl: string): Promise<{ x: number, y: number, isDirectInput: boolean } | null> {
+        console.log(`[${this.deviceId}] [IG-FSM] Executing Strategy 3: Zero-Hop Reset Fallback...`);
+        await this.device.executeCommand(`am start -a android.intent.action.VIEW -d "${postUrl}"`);
+        await this.device.sleep(3500); // Wait for reset
+        
+        // Sometimes the comment button is immediately visible after reset
+        let xmlData = await this.getSafeUiDumpXml();
+        let target = this.parseCommentTargetFromXml(xmlData);
+        if (target) return target;
+
+        // Try one massive swipe
+        const size = await this.getScreenSize();
+        await this.device.swipe(
+            Math.floor(size.width / 2),
+            Math.floor(size.height * 0.9),
+            Math.floor(size.width / 2),
+            Math.floor(size.height * 0.1),
+            300
+        );
+        await this.device.sleep(2500);
+        xmlData = await this.getSafeUiDumpXml();
+        return this.parseCommentTargetFromXml(xmlData);
+    }
+
+    private parseCommentTargetFromXml(xmlData: string): { x: number, y: number, isDirectInput: boolean } | null {
+        const directInput = this.findCommentInput(xmlData);
+        if (directInput) {
+            return { ...directInput, isDirectInput: true };
+        }
+
+        let byId = this.findByResourceId(xmlData, 'com.instagram.android:id/row_feed_button_comment');
+        if (!byId) byId = this.findByResourceId(xmlData, 'com.instagram.android:id/comment_button');
+        const byDesc = this.findByContentDesc(xmlData, 'Comment');
+        
+        const commentBtn = byId || byDesc;
+        if (commentBtn) {
+            return { ...commentBtn, isDirectInput: false };
+        }
+        
+        return null;
     }
 
     // ─── Comment Input — Dual Method ───────────────────────────────────────────
 
-    /**
-     * Method A: `input text` via shell.
-     * Fast, works well for ASCII. Can drop special chars/emojis on some devices.
-     */
-    private async typeViaInputText(text: string): Promise<void> {
-        const encoded = text.replace(/"/g, '\\"').replace(/ /g, '%s');
-        await this.device.executeCommand(`input text "${encoded}"`);
-    }
-
-    /**
-     * Method B: Clipboard paste via `am broadcast`.
-     * More reliable for unicode/emojis. Slower due to clipboard round-trip.
-     * Uses the CLIPPER broadcast which sets clipboard content from shell.
-     */
-    private async typeViaClipboard(text: string): Promise<void> {
-        // Encode text for shell
-        const escaped = text.replace(/'/g, "'\\''");
-        // Set clipboard using content provider (works on API 28+)
-        await this.device.executeCommand(
-            `am broadcast -a clipper.set -e text '${escaped}'`
-        );
-        await this.device.sleep(500);
-        // Select all + paste
-        await this.device.executeCommand('input keyevent KEYCODE_CTRL_A');
-        await this.device.sleep(300);
-        await this.device.executeCommand('input keyevent KEYCODE_PASTE');
-    }
-
-    /**
-     * Smart text input: tries Method A first, verifies text appeared in UI,
-     * falls back to Method B (clipboard) if the field is still empty.
-     */
     private async smartInputText(text: string, inputX: number, inputY: number): Promise<boolean> {
         // Ensure field is focused
         await this.tapWithJitter(inputX, inputY);
         await this.device.sleep(1000);
 
-        console.log(`[${this.deviceId}] [INPUT] Trying Method A (input text)...`);
+        console.log(`[${this.deviceId}] [INPUT] Pasting text via edge agent...`);
         try {
-            await this.typeViaInputText(text);
+            await this.device.pasteText(text);
         } catch (err) {
-            console.warn(`[${this.deviceId}] [INPUT Warning] Method A threw an error (likely emoji unsupported):`, err);
+            console.warn(`[${this.deviceId}] [INPUT Warning] pasteText threw an error:`, err);
         }
         await this.device.sleep(1500);
 
         // Verify: check if EditText has non-empty text
-        const xmlAfterA = await this.getSafeUiDumpXml();
+        const xmlAfter = await this.getSafeUiDumpXml();
         const snippet = text.substring(0, Math.min(10, text.length));
-        if (xmlAfterA.includes(snippet)) {
-            console.log(`[${this.deviceId}] [INPUT] Method A succeeded.`);
+        if (xmlAfter.includes(snippet)) {
+            console.log(`[${this.deviceId}] [INPUT] pasteText succeeded.`);
             return true;
         }
 
-        // Fallback: Method B (clipboard)
-        console.log(`[${this.deviceId}] [INPUT] Method A failed, falling back to clipboard paste...`);
-        // Clear field first
-        await this.device.executeCommand('input keyevent KEYCODE_CTRL_A');
-        await this.device.sleep(300);
-        await this.device.executeCommand('input keyevent KEYCODE_DEL');
-        await this.device.sleep(300);
-
-        await this.tapWithJitter(inputX, inputY);
-        await this.device.sleep(800);
-        await this.typeViaClipboard(text);
-        await this.device.sleep(1500);
-
-        const xmlAfterB = await this.getSafeUiDumpXml();
-        if (xmlAfterB.includes(snippet)) {
-            console.log(`[${this.deviceId}] [INPUT] Method B (clipboard) succeeded.`);
-            return true;
-        }
-
-        console.error(`[${this.deviceId}] [INPUT] Both input methods failed!`);
+        console.error(`[${this.deviceId}] [INPUT] pasteText failed! Text not found in UI dump.`);
         return false;
     }
 
@@ -431,37 +472,33 @@ export class InstagramEngager {
 
         await this.establishCleanState(postUrl);
 
-        // Find & tap Comment button (scroll if needed)
-        let xmlData = await this.getSafeUiDumpXml();
-        let commentBtn = this.findCommentButton(xmlData);
+        const commentTarget = await this.findCommentTargetWithStrategies(postUrl, isReel);
 
-        if (!commentBtn && !isReel) {
-            console.log(`[${this.deviceId}] [IG-FSM: COMMENT] Scrolling to find Comment button...`);
-            const size = await this.getScreenSize();
-            await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
-            await this.device.sleep(this.randInt(1500, 2500));
-            xmlData = await this.getSafeUiDumpXml();
-            commentBtn = this.findCommentButton(xmlData);
+        if (!commentTarget) {
+            this.ensureLogsDir();
+            fs.writeFileSync(`./logs/${this.deviceId}_ig_comment_btn_fail.xml`, await this.getSafeUiDumpXml());
+            throw new Error(`[${this.deviceId}] [IG-FSM: COMMENT] Comment target not found after applying all strategies.`);
         }
 
-        if (!commentBtn) {
-            this.ensureLogsDir();
-            fs.writeFileSync(`./logs/${this.deviceId}_ig_comment_btn_fail.xml`, xmlData);
-            throw new Error(`[${this.deviceId}] [IG-FSM: COMMENT] Comment button not found.`);
-        }
+        let inputCoords = { x: commentTarget.x, y: commentTarget.y };
 
-        console.log(`[${this.deviceId}] [IG-FSM: COMMENT] Tapping Comment button at ${commentBtn.x}, ${commentBtn.y}`);
-        await this.tapWithJitter(commentBtn.x, commentBtn.y);
-        await this.device.sleep(this.randInt(3500, 5000)); // wait for comment sheet
+        if (!commentTarget.isDirectInput) {
+            // It was just the icon, we need to tap it to open the sheet
+            console.log(`[${this.deviceId}] [IG-FSM: COMMENT] Tapping Comment Icon at ${commentTarget.x}, ${commentTarget.y}`);
+            await this.tapWithJitter(commentTarget.x, commentTarget.y);
+            await this.device.sleep(this.randInt(3500, 5000)); // wait for comment sheet
 
-        // Find comment input
-        const sheetXml = await this.getSafeUiDumpXml();
-        const inputCoords = this.findCommentInput(sheetXml);
-
-        if (!inputCoords) {
-            this.ensureLogsDir();
-            fs.writeFileSync(`./logs/${this.deviceId}_ig_comment_input_fail.xml`, sheetXml);
-            throw new Error(`[${this.deviceId}] [IG-FSM: COMMENT] Comment input field not found.`);
+            // Now find the actual input box in the bottom sheet
+            const sheetXml = await this.getSafeUiDumpXml();
+            const foundInput = this.findCommentInput(sheetXml);
+            if (!foundInput) {
+                this.ensureLogsDir();
+                fs.writeFileSync(`./logs/${this.deviceId}_ig_comment_input_fail.xml`, sheetXml);
+                throw new Error(`[${this.deviceId}] [IG-FSM: COMMENT] Comment input field not found after tapping icon.`);
+            }
+            inputCoords = foundInput;
+        } else {
+            console.log(`[${this.deviceId}] [IG-FSM: COMMENT] Found Direct Comment Input (Strategy 1) at ${commentTarget.x}, ${commentTarget.y}`);
         }
 
         // Smart dual-method text input
@@ -501,7 +538,7 @@ export class InstagramEngager {
     // FSM: ENGAGE POST (LIKE + COMMENT) — MVP primary action
     // ═══════════════════════════════════════════════════════════════════════════
 
-    public async engagePost(postUrl: string, commentText: string, shouldSave = false, shouldFollow = false): Promise<boolean> {
+    public async engagePost(postUrl: string, commentText: string): Promise<boolean> {
         const isReel = postUrl.includes('/reel/');
         console.log(`\n=== [IG-FSM: ENGAGE POST] Starting on ${this.deviceId} ===`);
 
@@ -520,71 +557,37 @@ export class InstagramEngager {
             console.warn(`[${this.deviceId}] [IG-FSM: ENGAGE] Like button not found, continuing.`);
         }
 
-        // ── SAVE PHASE ──────────────────────────────────────────────────────
-        if (shouldSave) {
-            await this.stealthDelay('save action');
-            const saveResult = await this.findSaveButton(2, isReel);
-            if (saveResult && !saveResult.alreadySaved) {
-                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Tapping Save at ${saveResult.x}, ${saveResult.y}`);
-                await this.tapWithJitter(saveResult.x, saveResult.y);
-                console.log(`✅ [${this.deviceId}] [IG-FSM: ENGAGE] Post Saved!`);
-                await this.microPause();
-            } else if (saveResult?.alreadySaved) {
-                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Already saved, skipping.`);
-            } else {
-                console.warn(`[${this.deviceId}] [IG-FSM: ENGAGE] Save button not found.`);
-            }
-        }
 
-        // ── FOLLOW PHASE ────────────────────────────────────────────────────
-        if (shouldFollow) {
-            await this.stealthDelay('follow action');
-            const followResult = await this.findFollowButton(2, isReel);
-            if (followResult && !followResult.alreadyFollowing) {
-                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Tapping Follow at ${followResult.x}, ${followResult.y}`);
-                await this.tapWithJitter(followResult.x, followResult.y);
-                console.log(`✅ [${this.deviceId}] [IG-FSM: ENGAGE] User Followed!`);
-                await this.microPause();
-            } else if (followResult?.alreadyFollowing) {
-                console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Already following, skipping.`);
-            } else {
-                console.warn(`[${this.deviceId}] [IG-FSM: ENGAGE] Follow button not found.`);
-            }
-        }
 
         // ── COMMENT PHASE ───────────────────────────────────────────────────
         await this.stealthDelay('comment action');
-        // Get fresh UI dump after like + delay
-        let xmlData = await this.getSafeUiDumpXml();
-        let commentBtn = this.findCommentButton(xmlData);
+        const commentTarget = await this.findCommentTargetWithStrategies(postUrl, isReel);
 
-        if (!commentBtn && !isReel) {
-            console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Scrolling to find Comment button...`);
-            const size = await this.getScreenSize();
-            await this.device.swipe(Math.floor(size.width / 2), Math.floor(size.height * 0.6), Math.floor(size.width / 2), Math.floor(size.height * 0.3), this.randInt(400, 700));
-            await this.device.sleep(this.randInt(1500, 2500));
-            xmlData = await this.getSafeUiDumpXml();
-            commentBtn = this.findCommentButton(xmlData);
+        if (!commentTarget) {
+            this.ensureLogsDir();
+            fs.writeFileSync(`./logs/${this.deviceId}_ig_engage_comment_fail.xml`, await this.getSafeUiDumpXml());
+            throw new Error(`[${this.deviceId}] [IG-FSM: ENGAGE] Comment target not found after applying all strategies.`);
         }
 
-        if (!commentBtn) {
-            this.ensureLogsDir();
-            fs.writeFileSync(`./logs/${this.deviceId}_ig_engage_comment_fail.xml`, xmlData);
-            throw new Error(`[${this.deviceId}] [IG-FSM: ENGAGE] Comment button not found.`);
-        }
+        let inputCoords = { x: commentTarget.x, y: commentTarget.y };
 
-        console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Tapping Comment at ${commentBtn.x}, ${commentBtn.y}`);
-        await this.tapWithJitter(commentBtn.x, commentBtn.y);
-        await this.device.sleep(this.randInt(3500, 5500));
+        if (!commentTarget.isDirectInput) {
+            // It was just the icon, we need to tap it to open the sheet
+            console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Tapping Comment Icon at ${commentTarget.x}, ${commentTarget.y}`);
+            await this.tapWithJitter(commentTarget.x, commentTarget.y);
+            await this.device.sleep(this.randInt(3500, 5500)); // wait for comment sheet
 
-        // Find comment input
-        const sheetXml = await this.getSafeUiDumpXml();
-        const inputCoords = this.findCommentInput(sheetXml);
-
-        if (!inputCoords) {
-            this.ensureLogsDir();
-            fs.writeFileSync(`./logs/${this.deviceId}_ig_engage_input_fail.xml`, sheetXml);
-            throw new Error(`[${this.deviceId}] [IG-FSM: ENGAGE] Comment input field not found.`);
+            // Now find the actual input box in the bottom sheet
+            const sheetXml = await this.getSafeUiDumpXml();
+            const foundInput = this.findCommentInput(sheetXml);
+            if (!foundInput) {
+                this.ensureLogsDir();
+                fs.writeFileSync(`./logs/${this.deviceId}_ig_engage_input_fail.xml`, sheetXml);
+                throw new Error(`[${this.deviceId}] [IG-FSM: ENGAGE] Comment input field not found after tapping icon.`);
+            }
+            inputCoords = foundInput;
+        } else {
+            console.log(`[${this.deviceId}] [IG-FSM: ENGAGE] Found Direct Comment Input (Strategy 1) at ${commentTarget.x}, ${commentTarget.y}`);
         }
 
         // Smart dual-method typing

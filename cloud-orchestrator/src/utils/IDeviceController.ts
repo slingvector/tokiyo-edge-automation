@@ -6,11 +6,13 @@ export interface IDeviceController {
     openDeepLink(url: string, packageName?: string): Promise<void>;
     tapCoordinate(x: number, y: number): Promise<void>;
     inputText(text: string): Promise<void>;
+    pasteText(text: string): Promise<void>;
     pressEnter(): Promise<void>;
     pressBack(): Promise<void>;
     pressTab(): Promise<void>;
     swipe(x1: number, y1: number, x2: number, y2: number, duration?: number): Promise<void>;
     executeCommand(command: string): Promise<string>;
+    getScreenSize(): Promise<{ width: number, height: number }>;
     
     // Device State Management
     verifyDeviceState(): Promise<void>;

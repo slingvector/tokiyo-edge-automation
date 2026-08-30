@@ -5,6 +5,8 @@ services:
     image: postgres:16-alpine
     container_name: tokiyo-db
     restart: always
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_USER: tokiyo
       POSTGRES_PASSWORD: tokiyo_password
@@ -16,6 +18,8 @@ services:
     image: redis:7-alpine
     container_name: tokiyo-redis
     restart: always
+    ports:
+      - "6379:6379"
     volumes:
       - redisdata:/data
 

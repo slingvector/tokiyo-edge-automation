@@ -35,6 +35,28 @@
         v
 [Target App - Instagram / LinkedIn on real device]
 ```
+```
+
+---
+
+## Development vs. Production Execution Modes
+
+It is crucial to understand the difference between how the system executes on local emulators versus real devices in India.
+
+### 1. Local Development (Emulators / Phase 3)
+- **Privilege Level**: Root (via `tokiyo_root_daemon`).
+- **Execution Engine**: `CompiledScriptExecutor.kt` (The "Zero-Hop" bypass).
+- **Why we needed it**: Android Studio emulators have notoriously buggy Binder IPC implementations that caused Shizuku to drop connections and lock up when running heavy UI dumps in a loop. We built the C++ root daemon fallback solely so we could simulate the ADB shell environment locally and finish building the Instagram FSMs.
+- **Benefits for Dev**: Bypasses the Android OS Binder IPC entirely (Agent ➔ Unix Domain Socket ➔ C++ Daemon ➔ Shell), eliminating JVM overhead and latency jitter.
+
+### 2. Production (Physical Edge Devices / Phase 7)
+- **Privilege Level**: ADB-level (Non-root).
+- **Execution Engine**: `ShizukuExecutor.kt` using pure Shizuku Binder IPC.
+- **How it works**: When physical devices are provisioned, Wireless Debugging is enabled to start the Shizuku app. The Shizuku app elevates the Tokiyo Edge Agent to ADB privileges. The Edge Agent uses `Shizuku.newProcess()` to execute shell commands natively through Android's ActivityManager.
+- **Why it works**: Physical devices have rock-solid support for Shizuku's Binder IPC. It runs flawlessly without requiring a rooted device.
+- **Network Path**: Cloud Orchestrator ➔ WebSocket ➔ Android Edge Agent ➔ Shizuku ADB Shell.
+
+**Summary**: We will NOT use the root daemon on physical edge devices. The core architecture remains Cloud ➔ WebSocket ➔ Edge Agent ➔ Shizuku ADB Shell. The local testing bypass just proved the FSM logic was flawless.
 
 ---
 

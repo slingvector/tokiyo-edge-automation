@@ -13,13 +13,16 @@ class FlightRecorderImpl(
 
     override suspend fun captureSnapshot(): SnapshotData = withContext(Dispatchers.IO) {
         val uiDumpBase64 = try {
-            val uiDumpResult = executor.executeCommand("uiautomator dump /data/local/tmp/dump.xml && cat /data/local/tmp/dump.xml")
-            val xmlContent = if (uiDumpResult.exitCode == 0) uiDumpResult.stdout else ""
+            val uiDumpResult = executor.executeCommand("uiautomator dump /data/local/tmp/dump.xml; cat /data/local/tmp/dump.xml")
+            val rawStdout = uiDumpResult.stdout
+            
+            val xmlStartIndex = rawStdout.indexOf("<?xml")
+            val xmlContent = if (xmlStartIndex != -1) rawStdout.substring(xmlStartIndex) else ""
             
             if (xmlContent.isNotBlank()) {
                 Base64.getEncoder().encodeToString(xmlContent.toByteArray())
             } else {
-                println("FlightRecorder: rawXml is blank")
+                println("FlightRecorder: rawXml is blank. Stdout was: $rawStdout")
                 null
             }
         } catch (e: Exception) {
